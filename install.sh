@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Vizion installer
 API_URL="${VIZION_API:-https://YOUR-BOT-DOMAIN}"   # <- your bot/license server URL
-REPO_ZIP="https://github.com/YOUR_USER/YOUR_REPO/raw/main/main.zip"   # <- main.zip in the same repo as this script
+REPO_ZIP="https://github.com/ElXora/VizionScript/raw/refs/heads/main/main.zip"   # <- main.zip in the same repo as this script
 PANEL_DIR="${PANEL_DIR:-/var/www/pterodactyl}"
 
 C='\033[1;36m'; G='\033[1;32m'; R='\033[1;31m'; N='\033[0m'
