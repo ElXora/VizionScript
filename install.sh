@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Vizion installer
 API_URL="${VIZION_API:-https://YOUR-BOT-DOMAIN}"   # <- your bot/license server URL
+REPO_ZIP="https://github.com/YOUR_USER/YOUR_REPO/raw/main/main.zip"   # <- main.zip in the same repo as this script
 PANEL_DIR="${PANEL_DIR:-/var/www/pterodactyl}"
 
 C='\033[1;36m'; G='\033[1;32m'; R='\033[1;31m'; N='\033[0m'
@@ -33,7 +34,7 @@ echo -e " ${G}verified ✔${N}\n"
 
 echo "Downloading Vizion ($TYPE $VER)..."
 TMP=$(mktemp -d)
-curl -fsSL -X POST -H 'Content-Type: application/json' -d "$BODY" "$API_URL/api/download" -o "$TMP/v.zip" || { echo -e "${R}Download failed${N}"; exit 1; }
+curl -fsSL -L "$REPO_ZIP" -o "$TMP/v.zip" || { echo -e "${R}Download failed${N}"; exit 1; }
 unzip -q "$TMP/v.zip" -d "$TMP/src" || { echo -e "${R}Unzip failed${N}"; exit 1; }
 SRC=$(find "$TMP/src" -mindepth 1 -maxdepth 1 -type d | head -1); SRC=${SRC:-$TMP/src}
 
