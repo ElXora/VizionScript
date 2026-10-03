@@ -76,6 +76,19 @@ if [ "$TYPE" = "non-blueprint" ]; then
   # Make the config tolerate either export style
   sed -i -E "s#^(const|let|var) AssetsManifestPlugin = require\((['\"])webpack-assets-manifest\2\);#\1 AssetsManifestPlugin = (m => m.WebpackAssetsManifest || m.default || m)(require(\2webpack-assets-manifest\2));#" webpack.config.js
 
+  # Fix: "Terser Plugin ... unknown property 'cache'"
+  # terser-webpack-plugin v5+ dropped the `cache` option. Webpack 4 needs terser-webpack-plugin v4.
+  WP_MAJOR=$(node -p "require('./node_modules/webpack/package.json').version.split('.')[0]" 2>/dev/null)
+  TP_MAJOR=$(node -p "require('./node_modules/terser-webpack-plugin/package.json').version.split('.')[0]" 2>/dev/null)
+  if [ "${TP_MAJOR:-0}" -ge 5 ]; then
+    if [ "${WP_MAJOR:-4}" -le 4 ]; then
+      echo -e "${C}Pinning terser-webpack-plugin to 4.2.3...${N}"
+      yarn add -D terser-webpack-plugin@4.2.3 --exact || { echo -e "${R}Could not pin terser-webpack-plugin${N}"; exit 1; }
+    else
+      sed -i -E '/^\s*cache:\s*(true|false),?\s*$/d' webpack.config.js
+    fi
+  fi
+
   yarn build:production || { echo -e "${R}Build failed - theme not active. Fix the error above and run: yarn build:production${N}"; exit 1; }
 else
   echo -e "\n${C}Blueprint: rebuild with your Blueprint command (e.g. blueprint -rerun-install) after this.${N}"
