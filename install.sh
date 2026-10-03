@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Vizion installer
-API_URL="${VIZION_API:-https://YOUR-BOT-DOMAIN}"   # <- your bot/license server URL
-REPO_ZIP="https://github.com/ElXora/VizionScript/raw/refs/heads/main/main.zip"   # <- main.zip in the same repo as this script
+API_URL="http://78.154.103.21:10532"   # <- your bot address (Wispbyte IP or domain + port)
+REPO_ZIP="https://github.com/ElXora/VizionScript/raw/refs/heads/main/main.zip"   # <- your main.zip on GitHub
 PANEL_DIR="${PANEL_DIR:-/var/www/pterodactyl}"
 
 C='\033[1;36m'; G='\033[1;32m'; R='\033[1;31m'; N='\033[0m'
@@ -16,6 +16,7 @@ for c in curl unzip; do command -v $c >/dev/null || { echo -e "${R}$c is require
 
 read -rp "Email used for your license: " EMAIL
 read -rp "License key: " KEY
+EMAIL=$(echo "$EMAIL" | tr -d '\r' | xargs); KEY=$(echo "$KEY" | tr -d '\r' | xargs)
 echo -e "\n1) Non-Blueprint\n2) Blueprint"; read -rp "Select type: " T
 [ "$T" = "2" ] && TYPE="blueprint" || TYPE="non-blueprint"
 echo -e "\n1) 2.0.8\n2) 2.1.0"; read -rp "Select version: " V
@@ -26,9 +27,10 @@ BODY=$(printf '{"email":"%s","key":"%s","ip":"%s","requestedType":"%s","requeste
 
 echo -ne "\nVerifying license..."
 RESP=$(curl -s --max-time 20 -X POST -H 'Content-Type: application/json' -d "$BODY" "$API_URL/api/verify")
+if [ -z "$RESP" ]; then echo -e "\n${R}✖ Could not reach the license server. Try again later.${N}"; exit 1; fi
 if ! echo "$RESP" | grep -q '"success":true'; then
   MSG=$(echo "$RESP" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p')
-  echo -e "\n${R}✖ Invalid license${MSG:+ — $MSG}${N}"; exit 1
+  echo -e "\n${R}✖ ${MSG:-Invalid license}${N}"; exit 1
 fi
 echo -e " ${G}verified ✔${N}\n"
 
