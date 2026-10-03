@@ -38,8 +38,9 @@ echo "Downloading Vizion ($TYPE $VER)..."
 TMP=$(mktemp -d)
 curl -fsSL -L "$REPO_ZIP" -o "$TMP/v.zip" || { echo -e "${R}Download failed${N}"; exit 1; }
 unzip -q "$TMP/v.zip" -d "$TMP/src" || { echo -e "${R}Unzip failed${N}"; exit 1; }
-R=$(find "$TMP/src" -type d -path '*/resources/scripts' | head -1)
-if [ -n "$R" ]; then SRC=$(dirname "$(dirname "$R")"); else SRC=$(find "$TMP/src" -mindepth 1 -maxdepth 1 -type d | head -1); SRC=${SRC:-$TMP/src}; fi
+# NOTE: was "R=" which overwrote the red color variable -> renamed to RS
+RS=$(find "$TMP/src" -type d -path '*/resources/scripts' | head -1)
+if [ -n "$RS" ]; then SRC=$(dirname "$(dirname "$RS")"); else SRC=$(find "$TMP/src" -mindepth 1 -maxdepth 1 -type d | head -1); SRC=${SRC:-$TMP/src}; fi
 
 read -rp "Install into $PANEL_DIR ? [y/N]: " OK
 [[ "$OK" =~ ^[Yy]$ ]] || { echo "Cancelled."; rm -rf "$TMP"; exit 0; }
@@ -64,6 +65,17 @@ if [ "$TYPE" = "non-blueprint" ]; then
   yarn install || { echo -e "${R}yarn install failed${N}"; exit 1; }
   [ -x node_modules/.bin/cross-env ] || yarn add cross-env
   [ -d node_modules/webpack-bundle-analyzer ] || yarn add -D webpack-bundle-analyzer
+
+  # Fix: "[webpack-cli] TypeError: AssetsManifestPlugin is not a constructor"
+  # webpack-assets-manifest v6+ switched to a named export. Panel's webpack 4 needs v5.
+  AM_MAJOR=$(node -p "require('./node_modules/webpack-assets-manifest/package.json').version.split('.')[0]" 2>/dev/null)
+  if [ "${AM_MAJOR:-0}" -ge 6 ]; then
+    echo -e "${C}Pinning webpack-assets-manifest to 5.1.0...${N}"
+    yarn add -D webpack-assets-manifest@5.1.0 --exact || { echo -e "${R}Could not pin webpack-assets-manifest${N}"; exit 1; }
+  fi
+  # Make the config tolerate either export style
+  sed -i -E "s#^(const|let|var) AssetsManifestPlugin = require\((['\"])webpack-assets-manifest\2\);#\1 AssetsManifestPlugin = (m => m.WebpackAssetsManifest || m.default || m)(require(\2webpack-assets-manifest\2));#" webpack.config.js
+
   yarn build:production || { echo -e "${R}Build failed - theme not active. Fix the error above and run: yarn build:production${N}"; exit 1; }
 else
   echo -e "\n${C}Blueprint: rebuild with your Blueprint command (e.g. blueprint -rerun-install) after this.${N}"
