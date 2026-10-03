@@ -38,11 +38,32 @@ echo "Downloading Vizion ($TYPE $VER)..."
 TMP=$(mktemp -d)
 curl -fsSL -L "$REPO_ZIP" -o "$TMP/v.zip" || { echo -e "${R}Download failed${N}"; exit 1; }
 unzip -q "$TMP/v.zip" -d "$TMP/src" || { echo -e "${R}Unzip failed${N}"; exit 1; }
-SRC=$(find "$TMP/src" -mindepth 1 -maxdepth 1 -type d | head -1); SRC=${SRC:-$TMP/src}
+R=$(find "$TMP/src" -type d -path '*/resources/scripts' | head -1)
+if [ -n "$R" ]; then SRC=$(dirname "$(dirname "$R")"); else SRC=$(find "$TMP/src" -mindepth 1 -maxdepth 1 -type d | head -1); SRC=${SRC:-$TMP/src}; fi
 
 read -rp "Install into $PANEL_DIR ? [y/N]: " OK
 [[ "$OK" =~ ^[Yy]$ ]] || { echo "Cancelled."; rm -rf "$TMP"; exit 0; }
+[ -f "$PANEL_DIR/artisan" ] || { echo -e "${R}No Pterodactyl panel found in $PANEL_DIR (set PANEL_DIR=/your/path)${N}"; exit 1; }
 cp -a "$SRC"/. "$PANEL_DIR"/
-cd "$PANEL_DIR" && { [ "$TYPE" = "non-blueprint" ] && command -v yarn >/dev/null && yarn install && yarn build:production; }
 rm -rf "$TMP"
-echo -e "\n${G}✔ Vizion installed.${N}"
+cd "$PANEL_DIR" || exit 1
+chown -R www-data:www-data "$PANEL_DIR"/* 2>/dev/null || chown -R nginx:nginx "$PANEL_DIR"/* 2>/dev/null
+
+if [ "$TYPE" = "non-blueprint" ]; then
+  echo -e "\n${C}Building panel (this takes a few minutes)...${N}"
+  command -v node >/dev/null || { echo -e "${R}Node.js is required to build. Install Node 18+ and run the commands below manually.${N}"; }
+  command -v yarn >/dev/null || npm i -g yarn
+  NODE_MAJOR=$(node -v 2>/dev/null | sed 's/v\([0-9]*\).*/\1/')
+  [ "${NODE_MAJOR:-0}" -ge 17 ] && export NODE_OPTIONS=--openssl-legacy-provider
+  yarn install || { echo -e "${R}yarn install failed${N}"; exit 1; }
+  [ -x node_modules/.bin/cross-env ] || yarn add cross-env
+  yarn build:production || { echo -e "${R}Build failed - theme not active. Fix the error above and run: yarn build:production${N}"; exit 1; }
+else
+  echo -e "\n${C}Blueprint: rebuild with your Blueprint command (e.g. blueprint -rerun-install) after this.${N}"
+fi
+
+php artisan view:clear
+php artisan config:clear
+php artisan optimize
+chown -R www-data:www-data "$PANEL_DIR"/* 2>/dev/null || chown -R nginx:nginx "$PANEL_DIR"/* 2>/dev/null
+echo -e "\n${G}✔ Vizion installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
