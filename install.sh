@@ -1,446 +1,714 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
-# Vizion Installer
+set -e
 
-API_URL="http://78.154.103.21:10532"
-REPO_ZIP="https://github.com/ElXora/VizionScript/raw/refs/heads/main/main.zip"
+# ============================================================
+# Vizion Pterodactyl Theme Installer
+# ============================================================
+
 PANEL_DIR="${PANEL_DIR:-/var/www/pterodactyl}"
+THEME_URL="https://github.com/ElXora/VizionScript/raw/refs/heads/main/main.zip"
+LICENSE_SERVER="http://78.154.103.21:10532"
+SITE_URL="https://test.aldow.cyou"
 
-C='\033[1;36m'
-G='\033[1;32m'
-R='\033[1;31m'
+VERSION="2.1.0"
+
+C='\033[0;36m'
+G='\033[0;32m'
+R='\033[0;31m'
 Y='\033[1;33m'
 N='\033[0m'
 
-clear
+echo ""
+echo -e "${C}==============================================${N}"
+echo -e "${C}        VIZION THEME INSTALLER${N}"
+echo -e "${C}==============================================${N}"
+echo ""
 
-echo -e "${C}"
-echo ' __     __   _     _             '
-echo ' \ \   / /__| |__ (_) ___  _ __  '
-echo '  \ \ / / _ \ |_ \| |/ _ \|  _ \ '
-echo '   \ V /  __/ | | | | (_) | | | |'
-echo '    \_/ \___|_| |_|_|\___/|_| |_|'
-echo -e "${N}"
-echo -e "${C}Vizion Installer${N}"
-echo
+# ============================================================
+# ROOT CHECK
+# ============================================================
 
-# --------------------------------------------------
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${R}Please run this installer as root.${N}"
+    exit 1
+fi
+
+# ============================================================
 # REQUIREMENTS
-# --------------------------------------------------
+# ============================================================
 
-for c in curl unzip; do
-    command -v "$c" >/dev/null 2>&1 || {
-        echo -e "${R}$c is required. Install it first.${N}"
-        exit 1
-    }
-done
+echo -e "${C}Checking required packages...${N}"
 
-# --------------------------------------------------
-# INPUT
-# --------------------------------------------------
+apt-get update -y
 
-read -rp "Email used for your license: " EMAIL
-read -rp "License key: " KEY
+apt-get install -y \
+    curl \
+    unzip \
+    python3 \
+    sudo
 
-EMAIL=$(echo "$EMAIL" | tr -d '\r' | xargs)
-KEY=$(echo "$KEY" | tr -d '\r' | xargs)
+# ============================================================
+# PANEL CHECK
+# ============================================================
 
-echo
+if [ ! -d "$PANEL_DIR" ]; then
+    echo -e "${R}Pterodactyl panel directory not found:${N}"
+    echo "$PANEL_DIR"
+    exit 1
+fi
+
+cd "$PANEL_DIR"
+
+echo -e "${G}Panel found: $PANEL_DIR${N}"
+
+# ============================================================
+# LICENSE
+# ============================================================
+
+echo ""
+echo -e "${C}Enter your Vizion license key:${N}"
+read -r LICENSE_KEY
+
+if [ -z "$LICENSE_KEY" ]; then
+    echo -e "${R}License key cannot be empty.${N}"
+    exit 1
+fi
+
+echo ""
+echo -e "${C}Verifying license...${N}"
+
+LICENSE_RESPONSE="$(curl -fsS \
+    --max-time 15 \
+    --get \
+    --data-urlencode "license=$LICENSE_KEY" \
+    --data-urlencode "domain=$SITE_URL" \
+    --data-urlencode "version=$VERSION" \
+    "$LICENSE_SERVER/verify" 2>/dev/null || true)"
+
+if [ -z "$LICENSE_RESPONSE" ]; then
+    echo -e "${R}Could not contact license server.${N}"
+    exit 1
+fi
+
+echo "License response:"
+echo "$LICENSE_RESPONSE"
+echo ""
+
+if ! echo "$LICENSE_RESPONSE" | grep -qiE '"valid"[[:space:]]*:[[:space:]]*true|valid.*true|success.*true|status.*valid|licensed.*true'; then
+    echo -e "${R}License verification failed.${N}"
+    exit 1
+fi
+
+echo -e "${G}License verified successfully.${N}"
+
+# ============================================================
+# THEME TYPE
+# ============================================================
+
+echo ""
+echo -e "${C}Select theme type:${N}"
 echo "1) Non-Blueprint"
 echo "2) Blueprint"
-read -rp "Select type: " T
 
-if [ "$T" = "2" ]; then
-    TYPE="blueprint"
-else
-    TYPE="non-blueprint"
-fi
+read -r -p "Enter choice [1-2]: " THEME_CHOICE
 
-echo
+case "$THEME_CHOICE" in
+    1)
+        THEME_TYPE="non-blueprint"
+        ;;
+    2)
+        THEME_TYPE="blueprint"
+        ;;
+    *)
+        echo -e "${R}Invalid choice.${N}"
+        exit 1
+        ;;
+esac
+
+echo -e "${G}Selected: $THEME_TYPE${N}"
+
+# ============================================================
+# VERSION
+# ============================================================
+
+echo ""
+echo -e "${C}Select Vizion version:${N}"
 echo "1) 2.0.8"
 echo "2) 2.1.0"
-read -rp "Select version: " V
 
-if [ "$V" = "1" ]; then
-    VER="2.0.8"
-else
-    VER="2.1.0"
-fi
+read -r -p "Enter choice [1-2]: " VERSION_CHOICE
 
-# --------------------------------------------------
-# LICENSE
-# --------------------------------------------------
+case "$VERSION_CHOICE" in
+    1)
+        VERSION="2.0.8"
+        ;;
+    2)
+        VERSION="2.1.0"
+        ;;
+    *)
+        echo -e "${R}Invalid choice.${N}"
+        exit 1
+        ;;
+esac
 
-IP=$(curl -4 -s --max-time 5 https://api.ipify.org)
+echo -e "${G}Selected version: $VERSION${N}"
 
-BODY=$(printf \
-'{"email":"%s","key":"%s","ip":"%s","requestedType":"%s","requestedVersion":"%s"}' \
-"$EMAIL" "$KEY" "$IP" "$TYPE" "$VER")
+# ============================================================
+# TEMP DIRECTORY
+# ============================================================
 
-echo -ne "\nVerifying license..."
+TMP_DIR="$(mktemp -d)"
 
-RESP=$(curl -s --max-time 20 \
-    -X POST \
-    -H 'Content-Type: application/json' \
-    -d "$BODY" \
-    "$API_URL/api/verify")
+cleanup() {
+    rm -rf "$TMP_DIR"
+}
 
-if [ -z "$RESP" ]; then
-    echo -e "\n${R}✖ Could not reach the license server. Try again later.${N}"
-    exit 1
-fi
+trap cleanup EXIT
 
-if ! echo "$RESP" | grep -q '"success":true'; then
-    MSG=$(echo "$RESP" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p')
-    echo -e "\n${R}✖ ${MSG:-Invalid license}${N}"
-    exit 1
-fi
+ZIP_FILE="$TMP_DIR/vizion.zip"
+EXTRACT_DIR="$TMP_DIR/vizion"
 
-echo -e " ${G}verified ✔${N}\n"
+mkdir -p "$EXTRACT_DIR"
 
-# --------------------------------------------------
+# ============================================================
 # DOWNLOAD
-# --------------------------------------------------
+# ============================================================
 
-echo "Downloading Vizion ($TYPE $VER)..."
+echo ""
+echo -e "${C}Downloading Vizion theme...${N}"
 
-TMP=$(mktemp -d)
+curl -fL \
+    --retry 5 \
+    --connect-timeout 15 \
+    --max-time 1800 \
+    -o "$ZIP_FILE" \
+    "$THEME_URL"
 
-curl -fsSL -L "$REPO_ZIP" \
-    -o "$TMP/v.zip" || {
-        echo -e "${R}Download failed${N}"
-        rm -rf "$TMP"
-        exit 1
-    }
-
-unzip -q "$TMP/v.zip" \
-    -d "$TMP/src" || {
-        echo -e "${R}Unzip failed${N}"
-        rm -rf "$TMP"
-        exit 1
-    }
-
-RESOURCE_DIR=$(find "$TMP/src" -type d -path '*/resources/scripts' | head -1)
-
-if [ -n "$RESOURCE_DIR" ]; then
-    SRC=$(dirname "$(dirname "$RESOURCE_DIR")")
-else
-    SRC=$(find "$TMP/src" \
-        -mindepth 1 \
-        -maxdepth 1 \
-        -type d \
-        | head -1)
-
-    SRC=${SRC:-$TMP/src}
-fi
-
-# --------------------------------------------------
-# PANEL CHECK
-# --------------------------------------------------
-
-read -rp "Install into $PANEL_DIR ? [y/N]: " OK
-
-if [[ ! "$OK" =~ ^[Yy]$ ]]; then
-    echo "Cancelled."
-    rm -rf "$TMP"
-    exit 0
-fi
-
-if [ ! -f "$PANEL_DIR/artisan" ]; then
-    echo -e "${R}No Pterodactyl panel found in $PANEL_DIR${N}"
-    echo "Set PANEL_DIR=/your/path if needed."
-    rm -rf "$TMP"
+if [ ! -s "$ZIP_FILE" ]; then
+    echo -e "${R}Theme download failed.${N}"
     exit 1
 fi
 
-# --------------------------------------------------
-# INSTALL FILES
-# --------------------------------------------------
+echo -e "${G}Theme downloaded.${N}"
 
-echo -e "\n${C}Installing Vizion files...${N}"
+# ============================================================
+# EXTRACT
+# ============================================================
 
-cp -a "$SRC"/. "$PANEL_DIR"/
+echo -e "${C}Extracting theme...${N}"
 
-rm -rf "$TMP"
+unzip -q -o "$ZIP_FILE" -d "$EXTRACT_DIR"
 
-cd "$PANEL_DIR" || exit 1
+# Find the actual extracted directory/files.
+SOURCE_DIR="$EXTRACT_DIR"
 
-# Initial ownership
-chown -R www-data:www-data "$PANEL_DIR" 2>/dev/null || \
-chown -R nginx:nginx "$PANEL_DIR" 2>/dev/null || true
+if [ "$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1 ]; then
+    POSSIBLE_DIR="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
 
-# --------------------------------------------------
+    if [ -d "$POSSIBLE_DIR" ]; then
+        SOURCE_DIR="$POSSIBLE_DIR"
+    fi
+fi
+
+echo -e "${G}Theme extracted.${N}"
+
+# ============================================================
+# BACKUP
+# ============================================================
+
+BACKUP_DIR="/root/vizion-backup-$(date +%Y%m%d-%H%M%S)"
+
+echo ""
+echo -e "${C}Creating backup...${N}"
+
+mkdir -p "$BACKUP_DIR"
+
+for ITEM in \
+    app \
+    bootstrap \
+    config \
+    database \
+    public \
+    resources \
+    routes \
+    storage \
+    webpack.config.js \
+    package.json \
+    yarn.lock
+do
+    if [ -e "$PANEL_DIR/$ITEM" ]; then
+        cp -a "$PANEL_DIR/$ITEM" "$BACKUP_DIR/" 2>/dev/null || true
+    fi
+done
+
+echo -e "${G}Backup created: $BACKUP_DIR${N}"
+
+# ============================================================
+# COPY THEME
+# ============================================================
+
+echo ""
+echo -e "${C}Installing Vizion files...${N}"
+
+cp -a "$SOURCE_DIR"/. "$PANEL_DIR"/
+
+cd "$PANEL_DIR"
+
+echo -e "${G}Theme files copied.${N}"
+
+# ============================================================
 # NON-BLUEPRINT BUILD
-# --------------------------------------------------
+# ============================================================
 
-if [ "$TYPE" = "non-blueprint" ]; then
+if [ "$THEME_TYPE" = "non-blueprint" ]; then
 
-    echo -e "\n${C}Preparing panel dependencies...${N}"
+    echo ""
+    echo -e "${C}==============================================${N}"
+    echo -e "${C}        BUILDING NON-BLUEPRINT THEME${N}"
+    echo -e "${C}==============================================${N}"
+    echo ""
 
-    command -v node >/dev/null 2>&1 || {
-        echo -e "${R}Node.js is required to build Vizion.${N}"
+    # --------------------------------------------------------
+    # NODE CHECK
+    # --------------------------------------------------------
+
+    if ! command -v node >/dev/null 2>&1; then
+        echo -e "${R}Node.js is not installed.${N}"
         exit 1
-    }
-
-    command -v yarn >/dev/null 2>&1 || {
-        echo "Yarn not found. Installing..."
-        npm install -g yarn
-    }
-
-    NODE_MAJOR=$(node -v 2>/dev/null | sed 's/v\([0-9]*\).*/\1/')
-
-    if [ "${NODE_MAJOR:-0}" -ge 17 ]; then
-        export NODE_OPTIONS=--openssl-legacy-provider
     fi
 
+    if ! command -v yarn >/dev/null 2>&1; then
+        echo -e "${R}Yarn is not installed.${N}"
+        exit 1
+    fi
+
+    echo -e "${C}Node version:${N}"
+    node -v
+
+    echo -e "${C}Yarn version:${N}"
+    yarn -v
+
+    # --------------------------------------------------------
+    # OPENSSL FIX FOR NEW NODE
+    # --------------------------------------------------------
+
+    NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
+
+    if [ "$NODE_MAJOR" -ge 17 ]; then
+        export NODE_OPTIONS="--openssl-legacy-provider"
+        echo -e "${Y}Using NODE_OPTIONS=--openssl-legacy-provider${N}"
+    fi
+
+    # --------------------------------------------------------
+    # YARN INSTALL
+    # --------------------------------------------------------
+
+    echo ""
     echo -e "${C}Installing dependencies...${N}"
 
-    yarn install || {
-        echo -e "${R}yarn install failed${N}"
+    yarn install --network-timeout 600000 || {
+        echo -e "${R}yarn install failed.${N}"
         exit 1
     }
 
-    # --------------------------------------------------
-    # FIX 1: Webpack Assets Manifest
-    # --------------------------------------------------
+    # --------------------------------------------------------
+    # WEBPACK ASSETS MANIFEST
+    # --------------------------------------------------------
 
-    echo -e "${C}Fixing webpack-assets-manifest...${N}"
+    echo ""
+    echo -e "${C}Installing webpack-assets-manifest...${N}"
 
     yarn add -D webpack-assets-manifest@5.0.0 || {
-        echo -e "${R}Failed installing webpack-assets-manifest${N}"
+        echo -e "${R}Failed to install webpack-assets-manifest.${N}"
         exit 1
     }
 
-    # --------------------------------------------------
-    # FIX 2: Terser Webpack Plugin
-    # --------------------------------------------------
+    # --------------------------------------------------------
+    # TERSER FIX
+    # --------------------------------------------------------
 
-    echo -e "${C}Fixing terser-webpack-plugin...${N}"
+    echo ""
+    echo -e "${C}Fixing terser-webpack-plugin compatibility...${N}"
 
-    yarn remove terser-webpack-plugin >/dev/null 2>&1 || true
+    yarn remove terser-webpack-plugin || true
 
     yarn add -D terser-webpack-plugin@4.2.3 || {
-        echo -e "${R}Failed installing terser-webpack-plugin${N}"
+        echo -e "${R}Failed to install terser-webpack-plugin.${N}"
         exit 1
     }
 
-    # --------------------------------------------------
-    # FIX 3: Webpack 5 path polyfill
-    # --------------------------------------------------
+    # --------------------------------------------------------
+    # PATH BROWSERIFY
+    # --------------------------------------------------------
 
-    echo -e "${C}Adding path-browserify...${N}"
+    echo ""
+    echo -e "${C}Installing path-browserify...${N}"
 
     yarn add path-browserify || {
-        echo -e "${R}Failed installing path-browserify${N}"
+        echo -e "${R}Failed to install path-browserify.${N}"
         exit 1
     }
 
-    # Add webpack fallback automatically
-    python3 - <<'PY'
+    # --------------------------------------------------------
+    # WEBPACK PATH FALLBACK
+    # --------------------------------------------------------
+
+    echo ""
+    echo -e "${C}Adding webpack path fallback...${N}"
+
+    python3 <<'PY'
 from pathlib import Path
+import re
 
-p = Path("webpack.config.js")
+file = Path("webpack.config.js")
 
-if p.exists():
-    s = p.read_text()
+if not file.exists():
+    print("webpack.config.js not found, skipping fallback patch.")
+    raise SystemExit(0)
 
-    if "path-browserify" not in s:
-        marker = "resolve: {"
+text = file.read_text()
 
-        if marker in s:
-            s = s.replace(
-                marker,
-                marker + '\n        fallback: { path: require.resolve("path-browserify") },',
-                1
-            )
-            p.write_text(s)
-            print("Added path-browserify webpack fallback.")
-        else:
-            print("WARNING: Could not find resolve: {} in webpack.config.js")
-    else:
-        print("path-browserify fallback already exists.")
+if "path-browserify" in text:
+    print("path-browserify fallback already exists.")
+    raise SystemExit(0)
+
+# If resolve already exists, add fallback inside it.
+resolve_match = re.search(
+    r'(?m)^(\s*)resolve\s*:\s*\{',
+    text
+)
+
+if resolve_match:
+    indent = resolve_match.group(1) + "    "
+
+    insert = (
+        f'{indent}fallback: {{\n'
+        f'{indent}    path: require.resolve("path-browserify"),\n'
+        f'{indent}}},\n'
+    )
+
+    pos = resolve_match.end()
+    text = text[:pos] + "\n" + insert + text[pos:]
+
 else:
-    print("WARNING: webpack.config.js not found.")
+    # Insert a resolve section before module/config if possible.
+    insert = '''
+    resolve: {
+        fallback: {
+            path: require.resolve("path-browserify"),
+        },
+    },
+'''
+
+    module_match = re.search(r'(?m)^(\s*)module\s*:\s*\{', text)
+
+    if module_match:
+        pos = module_match.start()
+        text = text[:pos] + insert + "\n" + text[pos:]
+    else:
+        # Fallback: append before EOF.
+        text += "\n" + insert + "\n"
+
+file.write_text(text)
+
+print("webpack path fallback added.")
 PY
 
-    # --------------------------------------------------
-    # EXISTING DEPENDENCIES
-    # --------------------------------------------------
+    # --------------------------------------------------------
+    # CROSS ENV
+    # --------------------------------------------------------
 
-    [ -x node_modules/.bin/cross-env ] || yarn add cross-env
+    echo ""
+    echo -e "${C}Checking cross-env...${N}"
 
-    [ -d node_modules/webpack-bundle-analyzer ] || \
-        yarn add -D webpack-bundle-analyzer
+    if ! yarn list --pattern "^cross-env$" 2>/dev/null | grep -q "cross-env"; then
+        yarn add -D cross-env || {
+            echo -e "${R}Failed to install cross-env.${N}"
+            exit 1
+        }
+    fi
 
-    # --------------------------------------------------
-    # CLEAN WEBPACK CACHE
-    # --------------------------------------------------
+    # --------------------------------------------------------
+    # WEBPACK BUNDLE ANALYZER
+    # --------------------------------------------------------
 
-    echo -e "${C}Cleaning webpack cache...${N}"
+    echo ""
+    echo -e "${C}Checking webpack-bundle-analyzer...${N}"
+
+    if ! yarn list --pattern "webpack-bundle-analyzer" 2>/dev/null | grep -q "webpack-bundle-analyzer"; then
+        yarn add -D webpack-bundle-analyzer || {
+            echo -e "${R}Failed to install webpack-bundle-analyzer.${N}"
+            exit 1
+        }
+    fi
+
+    # --------------------------------------------------------
+    # ICON POSITION FIX
+    # --------------------------------------------------------
+
+    echo ""
+    echo -e "${C}Checking DialogIcon IconPosition export...${N}"
+
+    python3 <<'PY'
+from pathlib import Path
+
+file = Path("resources/scripts/components/elements/dialog/DialogIcon.tsx")
+
+if not file.exists():
+    print("DialogIcon.tsx not found, skipping IconPosition patch.")
+    raise SystemExit(0)
+
+text = file.read_text()
+
+if "IconPosition" in text and "export enum IconPosition" in text:
+    print("IconPosition export already exists.")
+    raise SystemExit(0)
+
+if "IconPosition" not in text:
+    print("IconPosition is not referenced in DialogIcon.tsx, skipping.")
+    raise SystemExit(0)
+
+enum_code = '''
+export enum IconPosition {
+    LEFT = "left",
+    RIGHT = "right",
+}
+
+'''
+
+text = enum_code + text
+
+file.write_text(text)
+
+print("IconPosition export added.")
+PY
+
+    # --------------------------------------------------------
+    # XTERM UNICODE SUPPORT
+    # --------------------------------------------------------
+
+    echo ""
+    echo -e "${C}Installing xterm-addon-unicode11...${N}"
+
+    yarn add xterm-addon-unicode11 || {
+        echo -e "${R}Failed to install xterm-addon-unicode11.${N}"
+        exit 1
+    }
+
+    # --------------------------------------------------------
+    # CLEAN NODE CACHE
+    # --------------------------------------------------------
+
+    echo ""
+    echo -e "${C}Cleaning frontend build cache...${N}"
 
     rm -rf node_modules/.cache
 
-    # --------------------------------------------------
-    # BUILD
-    # --------------------------------------------------
+    # --------------------------------------------------------
+    # EXTRA YARN BUILD
+    # --------------------------------------------------------
 
-    echo -e "\n${C}Building panel (this can take a few minutes)...${N}"
+    echo ""
+    echo -e "${C}Running yarn build...${N}"
 
-    yarn build:production || {
-        echo -e "${R}"
-        echo "Build failed."
-        echo "Fix the error above and run:"
-        echo "yarn build:production"
-        echo -e "${N}"
+    yarn build || {
+        echo -e "${R}yarn build failed.${N}"
         exit 1
     }
 
-else
+    # --------------------------------------------------------
+    # PRODUCTION BUILD
+    # --------------------------------------------------------
 
-    echo -e "\n${C}Blueprint selected.${N}"
-    echo "Rebuild with your Blueprint command after installation."
-    echo "Example:"
-    echo "blueprint -rerun-install"
+    echo ""
+    echo -e "${C}Running yarn build:production...${N}"
+
+    yarn build:production || {
+        echo -e "${R}Production frontend build failed.${N}"
+        exit 1
+    }
+
+    echo ""
+    echo -e "${G}Frontend build completed successfully.${N}"
 
 fi
 
-# --------------------------------------------------
-# LARAVEL CACHE / PERMISSIONS FIX
-# --------------------------------------------------
+# ============================================================
+# LARAVEL RUNTIME DIRECTORIES
+# ============================================================
 
-echo -e "\n${C}Fixing Laravel permissions...${N}"
+echo ""
+echo -e "${C}Preparing Laravel runtime directories...${N}"
 
-mkdir -p storage/framework/cache/data
-mkdir -p storage/framework/sessions
-mkdir -p storage/framework/views
-mkdir -p storage/logs
-mkdir -p bootstrap/cache
+cd "$PANEL_DIR"
+
+mkdir -p \
+    storage/framework/cache/data \
+    storage/framework/sessions \
+    storage/framework/views \
+    storage/logs \
+    bootstrap/cache
+
+# ============================================================
+# REMOVE OLD COMPILED VIEWS/CACHE DATA
+# ============================================================
+
+echo -e "${C}Removing stale Laravel compiled files...${N}"
+
+find storage/framework/views -type f -delete 2>/dev/null || true
+find storage/framework/cache/data -type f -delete 2>/dev/null || true
+
+# ============================================================
+# PERMISSIONS
+# ============================================================
+
+echo ""
+echo -e "${C}Fixing Laravel permissions...${N}"
 
 chown -R www-data:www-data \
     storage \
-    bootstrap/cache \
-    public/assets \
-    2>/dev/null || true
+    bootstrap/cache
 
-chmod -R ug+rwX \
-    storage \
-    bootstrap/cache \
-    2>/dev/null || true
+find storage bootstrap/cache -type d -exec chmod 775 {} \; 2>/dev/null || true
+find storage bootstrap/cache -type f -exec chmod 664 {} \; 2>/dev/null || true
 
-find storage bootstrap/cache \
-    -type d \
-    -exec chmod 775 {} \; \
-    2>/dev/null || true
+chmod -R ug+rwX storage bootstrap/cache
 
-find storage bootstrap/cache \
-    -type f \
-    -exec chmod 664 {} \; \
-    2>/dev/null || true
+# ============================================================
+# WWW-DATA WRITE TEST
+# ============================================================
 
-# --------------------------------------------------
-# CLEAR OLD CACHE
-# --------------------------------------------------
+echo ""
+echo -e "${C}Testing Laravel write permissions...${N}"
 
+TEST_FILE="$PANEL_DIR/storage/framework/cache/data/.vizion_write_test"
+
+if sudo -u www-data sh -c "touch '$TEST_FILE' && rm -f '$TEST_FILE'"; then
+    echo -e "${G}Laravel write test passed.${N}"
+else
+    echo -e "${R}Laravel cannot write to storage.${N}"
+    echo ""
+    echo "Current permissions:"
+    ls -ld "$PANEL_DIR/storage"
+    ls -ld "$PANEL_DIR/storage/framework"
+    ls -ld "$PANEL_DIR/storage/framework/cache"
+    ls -ld "$PANEL_DIR/storage/framework/cache/data"
+    exit 1
+fi
+
+# ============================================================
+# LARAVEL CACHE CLEAR
+# ============================================================
+
+echo ""
 echo -e "${C}Clearing Laravel caches...${N}"
 
-php artisan view:clear
-php artisan config:clear
-php artisan route:clear
-php artisan cache:clear
-php artisan optimize:clear
+php artisan view:clear || true
+php artisan config:clear || true
+php artisan route:clear || true
+php artisan cache:clear || true
 
-# --------------------------------------------------
-# CLEAR OLD COMPILED VIEWS / CACHE DATA
-# --------------------------------------------------
+# ============================================================
+# LARAVEL OPTIMIZE
+# ============================================================
 
-rm -rf storage/framework/cache/data/*
-rm -rf storage/framework/views/*
-
-# Recreate directories after cleanup
-mkdir -p storage/framework/cache/data
-mkdir -p storage/framework/views
-
-chown -R www-data:www-data \
-    storage \
-    bootstrap/cache \
-    2>/dev/null || true
-
-chmod -R ug+rwX \
-    storage \
-    bootstrap/cache \
-    2>/dev/null || true
-
-# --------------------------------------------------
-# FINAL LARAVEL OPTIMIZE
-# --------------------------------------------------
-
+echo ""
 echo -e "${C}Optimizing Laravel...${N}"
 
-php artisan optimize
+php artisan optimize || {
+    echo -e "${Y}Laravel optimize returned an error.${N}"
+    echo -e "${Y}Continuing so the panel can still be tested.${N}"
+}
 
-# --------------------------------------------------
-# FINAL OWNERSHIP
-# --------------------------------------------------
+# ============================================================
+# FINAL PERMISSIONS
+# ============================================================
+
+echo ""
+echo -e "${C}Applying final permissions...${N}"
 
 chown -R www-data:www-data \
-    "$PANEL_DIR" \
-    2>/dev/null || \
-chown -R nginx:nginx \
-    "$PANEL_DIR" \
-    2>/dev/null || true
+    storage \
+    bootstrap/cache
 
-# --------------------------------------------------
+if [ -d "$PANEL_DIR/public/assets" ]; then
+    chown -R www-data:www-data "$PANEL_DIR/public/assets"
+    chmod -R ug+rwX "$PANEL_DIR/public/assets"
+fi
+
+find storage bootstrap/cache -type d -exec chmod 775 {} \; 2>/dev/null || true
+find storage bootstrap/cache -type f -exec chmod 664 {} \; 2>/dev/null || true
+
+# ============================================================
 # PHP-FPM RESTART
-# --------------------------------------------------
+# ============================================================
 
+echo ""
 echo -e "${C}Restarting PHP-FPM...${N}"
 
-systemctl restart php8.3-fpm 2>/dev/null || \
-systemctl restart php8.2-fpm 2>/dev/null || \
-systemctl restart php8.1-fpm 2>/dev/null || true
+PHP_SERVICE=""
 
-# --------------------------------------------------
-# VERIFY BUNDLE
-# --------------------------------------------------
+for SERVICE in php8.3-fpm php8.2-fpm php8.1-fpm php8.0-fpm php7.4-fpm; do
+    if systemctl list-unit-files 2>/dev/null | grep -q "^${SERVICE}"; then
+        PHP_SERVICE="$SERVICE"
+        break
+    fi
+done
 
-echo
-echo -e "${C}Checking generated assets...${N}"
-
-BUNDLE=$(find "$PANEL_DIR/public/assets" \
-    -maxdepth 1 \
-    -type f \
-    -name 'bundle.*.js' \
-    | head -1)
-
-if [ -n "$BUNDLE" ]; then
-    echo -e "${G}✔ Bundle found:${N} $(basename "$BUNDLE")"
+if [ -n "$PHP_SERVICE" ]; then
+    systemctl restart "$PHP_SERVICE"
+    echo -e "${G}Restarted $PHP_SERVICE${N}"
 else
-    echo -e "${Y}⚠ No bundle.*.js found in public/assets${N}"
+    echo -e "${Y}Could not automatically detect PHP-FPM service.${N}"
 fi
 
-# --------------------------------------------------
-# WRITE TEST
-# --------------------------------------------------
+# ============================================================
+# FINAL ASSET CHECK
+# ============================================================
 
-if sudo -u www-data test -w "$PANEL_DIR/storage/framework/cache/data" 2>/dev/null; then
-    echo -e "${G}✔ www-data can write to Laravel cache${N}"
+echo ""
+echo -e "${C}Checking generated frontend assets...${N}"
+
+if compgen -G "$PANEL_DIR/public/assets/bundle.*.js" > /dev/null; then
+    echo -e "${G}Frontend bundle found:${N}"
+    find "$PANEL_DIR/public/assets" -maxdepth 1 -type f -name 'bundle.*.js' -printf '%f\n' | sort
 else
-    echo -e "${Y}⚠ www-data write test failed${N}"
+    echo -e "${Y}WARNING: No bundle.*.js file was found.${N}"
 fi
 
-# --------------------------------------------------
-# DONE
-# --------------------------------------------------
+# ============================================================
+# FINAL LARAVEL WRITE TEST
+# ============================================================
 
-echo
-echo -e "${G}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
-echo -e "${G}✔ Vizion installed successfully!${N}"
-echo -e "${G}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
-echo
-echo "Panel: $PANEL_DIR"
-echo "Type:  $TYPE"
-echo "Version: $VER"
-echo
-echo "Hard-refresh your browser:"
-echo "Ctrl + Shift + R"
-echo cd /var/www/pterodactyl && yarn build:production && php artisan view:clear && php artisan optimize:clear && chown -R www-data:www-data public/assets storage bootstrap/cache && systemctl restart php8.3-fpm 2>/dev/null || systemctl restart php8.2-fpm 2>/dev/null || true
+echo ""
+echo -e "${C}Running final storage test...${N}"
+
+FINAL_TEST="$PANEL_DIR/storage/framework/cache/data/.vizion_final_test"
+
+if sudo -u www-data sh -c "mkdir -p '$(dirname "$FINAL_TEST")' && touch '$FINAL_TEST' && rm -f '$FINAL_TEST'"; then
+    echo -e "${G}Final storage test passed.${N}"
+else
+    echo -e "${R}Final storage test failed.${N}"
+    exit 1
+fi
+
+# ============================================================
+# COMPLETE
+# ============================================================
+
+echo ""
+echo -e "${C}==============================================${N}"
+echo -e "${G}       VIZION INSTALLATION COMPLETE${N}"
+echo -e "${C}==============================================${N}"
+echo ""
+echo -e "${G}Version:${N} $VERSION"
+echo -e "${G}Theme:${N} $THEME_TYPE"
+echo -e "${G}Panel:${N} $PANEL_DIR"
+echo -e "${G}URL:${N} $SITE_URL"
+echo -e "${G}Backup:${N} $BACKUP_DIR"
+echo ""
+echo -e "${Y}Clear your browser cache and hard refresh the panel.${N}"
+echo ""
+echo -e "${G}Done.${N}"
+echo ""
