@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Vizion installer
-API_URL="http://78.154.103.21:10532"   # <- your bot address (Wispbyte IP or domain + port)
-REPO_ZIP="https://github.com/ElXora/VizionScript/raw/refs/heads/main/main.zip"   # <- your main.zip on GitHub
+API_URL="http://78.154.103.21:10532"
+REPO_ZIP="https://github.com/ElXora/VizionScript/raw/refs/heads/main/main.zip"
 PANEL_DIR="${PANEL_DIR:-/var/www/pterodactyl}"
 
 C='\033[1;36m'; G='\033[1;32m'; R='\033[1;31m'; N='\033[0m'
@@ -67,7 +67,7 @@ if [ "$TYPE" = "non-blueprint" ]; then
   [ -d node_modules/webpack-bundle-analyzer ] || yarn add -D webpack-bundle-analyzer
 
   # Fix: "[webpack-cli] TypeError: AssetsManifestPlugin is not a constructor"
-  # webpack-assets-manifest v6+ switched to a named export. Panel's webpack 4 needs v5.
+  # webpack-assets-manifest v6+ switched to a named export; the panel config expects v5.
   AM_MAJOR=$(node -p "require('./node_modules/webpack-assets-manifest/package.json').version.split('.')[0]" 2>/dev/null)
   if [ "${AM_MAJOR:-0}" -ge 6 ]; then
     echo -e "${C}Pinning webpack-assets-manifest to 5.1.0...${N}"
@@ -76,17 +76,23 @@ if [ "$TYPE" = "non-blueprint" ]; then
   # Make the config tolerate either export style
   sed -i -E "s#^(const|let|var) AssetsManifestPlugin = require\((['\"])webpack-assets-manifest\2\);#\1 AssetsManifestPlugin = (m => m.WebpackAssetsManifest || m.default || m)(require(\2webpack-assets-manifest\2));#" webpack.config.js
 
-  # Fix: "Terser Plugin ... unknown property 'cache'"
-  # terser-webpack-plugin v5+ dropped the `cache` option. Webpack 4 needs terser-webpack-plugin v4.
+  # Webpack compatibility fixes (installed webpack version decides which apply)
   WP_MAJOR=$(node -p "require('./node_modules/webpack/package.json').version.split('.')[0]" 2>/dev/null)
   TP_MAJOR=$(node -p "require('./node_modules/terser-webpack-plugin/package.json').version.split('.')[0]" 2>/dev/null)
-  if [ "${TP_MAJOR:-0}" -ge 5 ]; then
-    if [ "${WP_MAJOR:-4}" -le 4 ]; then
-      echo -e "${C}Pinning terser-webpack-plugin to 4.2.3...${N}"
-      yarn add -D terser-webpack-plugin@4.2.3 --exact || { echo -e "${R}Could not pin terser-webpack-plugin${N}"; exit 1; }
-    else
-      sed -i -E '/^\s*cache:\s*(true|false),?\s*$/d' webpack.config.js
+  if [ "${WP_MAJOR:-5}" -ge 5 ]; then
+    # Webpack 5: terser plugin must be v5+, its old `cache` option is gone
+    if [ "${TP_MAJOR:-0}" -lt 5 ]; then
+      echo -e "${C}Installing terser-webpack-plugin v5...${N}"
+      yarn add -D terser-webpack-plugin@^5 || { echo -e "${R}Could not install terser-webpack-plugin${N}"; exit 1; }
     fi
+    sed -i -E '/^\s*cache:\s*(true|false),?\s*$/d' webpack.config.js
+    # Webpack 5: no automatic Node polyfills -> "Can't resolve 'path'"
+    [ -d node_modules/path-browserify ] || yarn add -D path-browserify || { echo -e "${R}Could not install path-browserify${N}"; exit 1; }
+    grep -q "path-browserify" webpack.config.js || sed -i -E "0,/^(\s*)resolve:\s*\{/s//&\n\1    fallback: { path: require.resolve('path-browserify') },/" webpack.config.js
+  elif [ "${TP_MAJOR:-0}" -ge 5 ]; then
+    # Webpack 4: needs terser-webpack-plugin v4
+    echo -e "${C}Pinning terser-webpack-plugin to 4.2.3...${N}"
+    yarn add -D terser-webpack-plugin@4.2.3 --exact || { echo -e "${R}Could not pin terser-webpack-plugin${N}"; exit 1; }
   fi
 
   yarn build:production || { echo -e "${R}Build failed - theme not active. Fix the error above and run: yarn build:production${N}"; exit 1; }
