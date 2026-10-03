@@ -57,6 +57,7 @@ if [ "$TYPE" = "non-blueprint" ]; then
   [ "${NODE_MAJOR:-0}" -ge 17 ] && export NODE_OPTIONS=--openssl-legacy-provider
   yarn install || { echo -e "${R}yarn install failed${N}"; exit 1; }
   [ -x node_modules/.bin/cross-env ] || yarn add cross-env
+  [ -d node_modules/webpack-bundle-analyzer ] || yarn add -D webpack-bundle-analyzer
   yarn build:production || { echo -e "${R}Build failed - theme not active. Fix the error above and run: yarn build:production${N}"; exit 1; }
 else
   echo -e "\n${C}Blueprint: rebuild with your Blueprint command (e.g. blueprint -rerun-install) after this.${N}"
