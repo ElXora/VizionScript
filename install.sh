@@ -3,7 +3,7 @@
 API_URL="http://78.154.103.21:10532"
 REPO_ZIP="https://github.com/ElXora/VizionScript/raw/refs/heads/main/main.zip"
 PANEL_DIR="${PANEL_DIR:-/var/www/pterodactyl}"
-BP_URL="${REPO_ZIP%main.zip}main.blueprint"   # main.blueprint sits next to main.zip in your repo
+BP_URL="${REPO_ZIP%main.zip}fix.zip"   # fix.zip (Blueprint theme) sits next to main.zip in your repo
 
 C='\033[1;36m'; G='\033[1;32m'; R='\033[1;31m'; N='\033[0m'
 clear; echo -e "${C}
@@ -49,14 +49,22 @@ fi
 
 if [ "$TYPE" = "blueprint" ]; then
   [ -f "$PANEL_DIR/artisan" ] || { echo -e "${R}No Pterodactyl panel found in $PANEL_DIR (set PANEL_DIR=/your/path)${N}"; exit 1; }
-  command -v blueprint >/dev/null || { echo -e "${R}Blueprint is not installed on this panel. Install Blueprint first (blueprint.zip), then run this installer again.${N}"; exit 1; }
   read -rp "Install Vizion (Blueprint) into $PANEL_DIR ? [y/N]: " OK
   [[ "$OK" =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 0; }
-  curl -fsSL -L "$BP_URL" -o "$PANEL_DIR/viziontheme.blueprint" || { echo -e "${R}Download failed${N}"; exit 1; }
+  TMP=$(mktemp -d)
+  curl -fsSL -L "$BP_URL" -o "$TMP/b.zip" || { echo -e "${R}Download failed${N}"; exit 1; }
+  unzip -q "$TMP/b.zip" -d "$TMP/src" || { echo -e "${R}Unzip failed${N}"; exit 1; }
+  RS=$(find "$TMP/src" -type d -path '*/resources/scripts' | head -1)
+  if [ -n "$RS" ]; then SRC=$(dirname "$(dirname "$RS")"); else SRC=$(find "$TMP/src" -mindepth 1 -maxdepth 1 -type d | head -1); SRC=${SRC:-$TMP/src}; fi
+  cp -a "$SRC"/. "$PANEL_DIR"/
+  rm -rf "$TMP"
   cd "$PANEL_DIR" || exit 1
-  blueprint -install viziontheme || { echo -e "${R}Blueprint install failed${N}"; exit 1; }
-  php artisan view:clear; php artisan cache:clear
+  mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views bootstrap/cache
+  rm -rf storage/framework/cache/data/* storage/framework/views/*
+  php artisan view:clear; php artisan config:clear; php artisan route:clear; php artisan cache:clear
+  php artisan optimize
   chown -R www-data:www-data "$PANEL_DIR"/* 2>/dev/null || chown -R nginx:nginx "$PANEL_DIR"/* 2>/dev/null
+  chmod -R ug+rwX storage bootstrap/cache
   echo -e "\n${G}✔ Vizion (Blueprint) installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
   exit 0
 fi
