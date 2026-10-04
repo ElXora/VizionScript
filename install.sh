@@ -3,7 +3,7 @@
 API_URL="http://78.154.103.21:10532"
 REPO_ZIP="https://github.com/ElXora/VizionScript/raw/refs/heads/main/main.zip"
 PANEL_DIR="${PANEL_DIR:-/var/www/pterodactyl}"
-BP_URL="${REPO_ZIP%main.zip}fix.zip"   # fix.zip (Blueprint theme) sits next to main.zip in your repo
+BP_URL="${REPO_ZIP%main.zip}main.blueprint"   # main.blueprint sits next to main.zip in your repo
 
 C='\033[1;36m'; G='\033[1;32m'; R='\033[1;31m'; N='\033[0m'
 clear; echo -e "${C}
@@ -47,11 +47,23 @@ else
   [ "$V" = "1" ] && VER="2.0.8" || VER="2.1.0"
 fi
 
-ZIP_URL="$REPO_ZIP"; [ "$TYPE" = "blueprint" ] && ZIP_URL="$BP_URL"
+if [ "$TYPE" = "blueprint" ]; then
+  [ -f "$PANEL_DIR/artisan" ] || { echo -e "${R}No Pterodactyl panel found in $PANEL_DIR (set PANEL_DIR=/your/path)${N}"; exit 1; }
+  command -v blueprint >/dev/null || { echo -e "${R}Blueprint is not installed on this panel. Install Blueprint first (blueprint.zip), then run this installer again.${N}"; exit 1; }
+  read -rp "Install Vizion (Blueprint) into $PANEL_DIR ? [y/N]: " OK
+  [[ "$OK" =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 0; }
+  curl -fsSL -L "$BP_URL" -o "$PANEL_DIR/viziontheme.blueprint" || { echo -e "${R}Download failed${N}"; exit 1; }
+  cd "$PANEL_DIR" || exit 1
+  blueprint -install viziontheme || { echo -e "${R}Blueprint install failed${N}"; exit 1; }
+  php artisan view:clear; php artisan cache:clear
+  chown -R www-data:www-data "$PANEL_DIR"/* 2>/dev/null || chown -R nginx:nginx "$PANEL_DIR"/* 2>/dev/null
+  echo -e "\n${G}✔ Vizion (Blueprint) installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
+  exit 0
+fi
 
 echo -e "\nDownloading Vizion ($TYPE $VER)..."
 TMP=$(mktemp -d)
-curl -fsSL -L "$ZIP_URL" -o "$TMP/v.zip" || { echo -e "${R}Download failed${N}"; exit 1; }
+curl -fsSL -L "$REPO_ZIP" -o "$TMP/v.zip" || { echo -e "${R}Download failed${N}"; exit 1; }
 unzip -q "$TMP/v.zip" -d "$TMP/src" || { echo -e "${R}Unzip failed${N}"; exit 1; }
 # NOTE: was "R=" which overwrote the red color variable -> renamed to RS
 RS=$(find "$TMP/src" -type d -path '*/resources/scripts' | head -1)
@@ -71,7 +83,7 @@ rm -rf storage/framework/cache/data/* storage/framework/views/*
 chown -R www-data:www-data storage bootstrap/cache 2>/dev/null || chown -R nginx:nginx storage bootstrap/cache 2>/dev/null
 chmod -R ug+rwX storage bootstrap/cache
 
-if [ "$TYPE" = "non-blueprint" ] || [ "$TYPE" = "blueprint" ]; then
+if [ "$TYPE" = "non-blueprint" ]; then
   echo -e "\n${C}Building panel (this takes a few minutes)...${N}"
   command -v node >/dev/null || { echo -e "${R}Node.js is required to build. Install Node 18+ and run the commands below manually.${N}"; }
   command -v yarn >/dev/null || npm i -g yarn
@@ -112,13 +124,6 @@ if [ "$TYPE" = "non-blueprint" ] || [ "$TYPE" = "blueprint" ]; then
     # Webpack 4: needs terser-webpack-plugin v4
     echo -e "${C}Pinning terser-webpack-plugin to 4.2.3...${N}"
     yarn add -D terser-webpack-plugin@4.2.3 --exact || { echo -e "${R}Could not pin terser-webpack-plugin${N}"; exit 1; }
-  fi
-
-  if [ "$TYPE" = "blueprint" ]; then
-    echo -e "${C}Installing Blueprint theme packages...${N}"
-    for P in "framer-motion@^6.3.10" "@preact/signals-react@^1.2.1" "react-chartjs-2@^4.2.0" "chart.js@^3.8.0" "boring-avatars@^1.7.0" "use-fit-text@^2.4.0" "deepmerge-ts@^4.2.1" "qrcode.react@^1.0.1" "xterm-addon-unicode11@^0.6.0"; do
-      [ -d "node_modules/${P%@^*}" ] || yarn add "$P" || { echo -e "${R}Could not install $P${N}"; exit 1; }
-    done
   fi
 
   yarn build:production || { echo -e "${R}Build failed - theme not active. Fix the error above and run: yarn build:production${N}"; exit 1; }
