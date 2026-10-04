@@ -72,6 +72,19 @@ if [ -n "$RS" ]; then SRC=$(dirname "$(dirname "$RS")"); else SRC=$(find "$TMP/s
 read -rp "Install into $PANEL_DIR ? [y/N]: " OK
 [[ "$OK" =~ ^[Yy]$ ]] || { echo "Cancelled."; rm -rf "$TMP"; exit 0; }
 [ -f "$PANEL_DIR/artisan" ] || { echo -e "${R}No Pterodactyl panel found in $PANEL_DIR (set PANEL_DIR=/your/path)${N}"; exit 1; }
+V=$(find "$TMP/src" -path '*/public/themes/vizion/vizion.css' | head -1)
+if [ "$TYPE" = "non-blueprint" ] && [ -n "$V" ]; then
+  # Vizion Mono (CSS + JS): no build needed
+  mkdir -p "$PANEL_DIR/public/themes/vizion"
+  cp -a "$(dirname "$V")"/. "$PANEL_DIR/public/themes/vizion/"
+  W="$PANEL_DIR/resources/views/templates/wrapper.blade.php"
+  grep -q "themes/vizion/vizion.css" "$W" || sed -i 's#</head>#    <link rel="stylesheet" href="/themes/vizion/vizion.css?v=3">\n    <script defer src="/themes/vizion/vizion.js?v=3"></script>\n</head>#' "$W"
+  rm -rf "$TMP"; cd "$PANEL_DIR" || exit 1
+  php artisan view:clear; php artisan cache:clear
+  chown -R www-data:www-data "$PANEL_DIR"/* 2>/dev/null || chown -R nginx:nginx "$PANEL_DIR"/* 2>/dev/null
+  echo -e "\n${G}✔ Vizion Mono installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
+  exit 0
+fi
 cp -a "$SRC"/. "$PANEL_DIR"/
 rm -rf "$TMP"
 cd "$PANEL_DIR" || exit 1
