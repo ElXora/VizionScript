@@ -47,31 +47,11 @@ else
   [ "$V" = "1" ] && VER="2.0.8" || VER="2.1.0"
 fi
 
-if [ "$TYPE" = "blueprint" ]; then
-  [ -f "$PANEL_DIR/artisan" ] || { echo -e "${R}No Pterodactyl panel found in $PANEL_DIR (set PANEL_DIR=/your/path)${N}"; exit 1; }
-  read -rp "Install Vizion (Blueprint) into $PANEL_DIR ? [y/N]: " OK
-  [[ "$OK" =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 0; }
-  TMP=$(mktemp -d)
-  curl -fsSL -L "$BP_URL" -o "$TMP/b.zip" || { echo -e "${R}Download failed${N}"; exit 1; }
-  unzip -q "$TMP/b.zip" -d "$TMP/src" || { echo -e "${R}Unzip failed${N}"; exit 1; }
-  RS=$(find "$TMP/src" -type d -path '*/resources/scripts' | head -1)
-  if [ -n "$RS" ]; then SRC=$(dirname "$(dirname "$RS")"); else SRC=$(find "$TMP/src" -mindepth 1 -maxdepth 1 -type d | head -1); SRC=${SRC:-$TMP/src}; fi
-  cp -a "$SRC"/. "$PANEL_DIR"/
-  rm -rf "$TMP"
-  cd "$PANEL_DIR" || exit 1
-  mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views bootstrap/cache
-  rm -rf storage/framework/cache/data/* storage/framework/views/*
-  php artisan view:clear; php artisan config:clear; php artisan route:clear; php artisan cache:clear
-  php artisan optimize
-  chown -R www-data:www-data "$PANEL_DIR"/* 2>/dev/null || chown -R nginx:nginx "$PANEL_DIR"/* 2>/dev/null
-  chmod -R ug+rwX storage bootstrap/cache
-  echo -e "\n${G}✔ Vizion (Blueprint) installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
-  exit 0
-fi
+ZIP_URL="$REPO_ZIP"; [ "$TYPE" = "blueprint" ] && ZIP_URL="$BP_URL"
 
 echo -e "\nDownloading Vizion ($TYPE $VER)..."
 TMP=$(mktemp -d)
-curl -fsSL -L "$REPO_ZIP" -o "$TMP/v.zip" || { echo -e "${R}Download failed${N}"; exit 1; }
+curl -fsSL -L "$ZIP_URL" -o "$TMP/v.zip" || { echo -e "${R}Download failed${N}"; exit 1; }
 unzip -q "$TMP/v.zip" -d "$TMP/src" || { echo -e "${R}Unzip failed${N}"; exit 1; }
 # NOTE: was "R=" which overwrote the red color variable -> renamed to RS
 RS=$(find "$TMP/src" -type d -path '*/resources/scripts' | head -1)
@@ -91,7 +71,7 @@ rm -rf storage/framework/cache/data/* storage/framework/views/*
 chown -R www-data:www-data storage bootstrap/cache 2>/dev/null || chown -R nginx:nginx storage bootstrap/cache 2>/dev/null
 chmod -R ug+rwX storage bootstrap/cache
 
-if [ "$TYPE" = "non-blueprint" ]; then
+if [ "$TYPE" = "non-blueprint" ] || [ "$TYPE" = "blueprint" ]; then
   echo -e "\n${C}Building panel (this takes a few minutes)...${N}"
   command -v node >/dev/null || { echo -e "${R}Node.js is required to build. Install Node 18+ and run the commands below manually.${N}"; }
   command -v yarn >/dev/null || npm i -g yarn
@@ -134,11 +114,16 @@ if [ "$TYPE" = "non-blueprint" ]; then
     yarn add -D terser-webpack-plugin@4.2.3 --exact || { echo -e "${R}Could not pin terser-webpack-plugin${N}"; exit 1; }
   fi
 
+  if [ "$TYPE" = "blueprint" ]; then
+    echo -e "${C}Installing Blueprint theme packages...${N}"
+    for P in "framer-motion@^6.3.10" "@preact/signals-react@^1.2.1" "react-chartjs-2@^4.2.0" "chart.js@^3.8.0" "boring-avatars@^1.7.0" "use-fit-text@^2.4.0" "deepmerge-ts@^4.2.1" "qrcode.react@^1.0.1" "xterm-addon-unicode11@^0.6.0"; do
+      [ -d "node_modules/${P%@^*}" ] || yarn add "$P" || { echo -e "${R}Could not install $P${N}"; exit 1; }
+    done
+  fi
+
   yarn build:production || { echo -e "${R}Build failed - theme not active. Fix the error above and run: yarn build:production${N}"; exit 1; }
   # Make sure the panel finds its manifest
   [ -f public/assets/assets-manifest.json ] && cp public/assets/assets-manifest.json public/assets/manifest.json
-else
-  echo -e "\n${C}Blueprint: rebuild with your Blueprint command (e.g. blueprint -rerun-install) after this.${N}"
 fi
 
 # Clear Laravel caches/views to prevent stale frontend references / white screen
@@ -148,8 +133,12 @@ php artisan route:clear
 php artisan cache:clear
 
 # Rebuild Laravel cache and restore runtime permissions to prevent 500 errors
+php artisan optimize:clear
 php artisan optimize
+php artisan queue:restart
 chown -R www-data:www-data storage bootstrap/cache 2>/dev/null || chown -R nginx:nginx storage bootstrap/cache 2>/dev/null
-chmod -R ug+rwX storage bootstrap/cache
+find "$PANEL_DIR" -path "$PANEL_DIR/node_modules" -prune -o -type d -exec chmod 755 {} \; 2>/dev/null
+find "$PANEL_DIR" -path "$PANEL_DIR/node_modules" -prune -o -type f -exec chmod 644 {} \; 2>/dev/null
+chmod -R 775 storage/* bootstrap/cache/
 chown -R www-data:www-data "$PANEL_DIR"/* 2>/dev/null || chown -R nginx:nginx "$PANEL_DIR"/* 2>/dev/null
 echo -e "\n${G}✔ Vizion installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
