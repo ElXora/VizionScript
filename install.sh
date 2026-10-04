@@ -3,6 +3,7 @@
 API_URL="http://78.154.103.21:10532"
 REPO_ZIP="https://github.com/ElXora/VizionScript/raw/refs/heads/main/main.zip"
 PANEL_DIR="${PANEL_DIR:-/var/www/pterodactyl}"
+BP_URL="${REPO_ZIP%main.zip}main.blueprint"   # main.blueprint sits next to main.zip in your repo
 
 C='\033[1;36m'; G='\033[1;32m'; R='\033[1;31m'; N='\033[0m'
 clear; echo -e "${C}
@@ -46,6 +47,20 @@ else
   [ "$V" = "1" ] && VER="2.0.8" || VER="2.1.0"
 fi
 
+if [ "$TYPE" = "blueprint" ]; then
+  [ -f "$PANEL_DIR/artisan" ] || { echo -e "${R}No Pterodactyl panel found in $PANEL_DIR (set PANEL_DIR=/your/path)${N}"; exit 1; }
+  command -v blueprint >/dev/null || { echo -e "${R}Blueprint is not installed on this panel. Install Blueprint first (blueprint.zip), then run this installer again.${N}"; exit 1; }
+  read -rp "Install Vizion (Blueprint) into $PANEL_DIR ? [y/N]: " OK
+  [[ "$OK" =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 0; }
+  curl -fsSL -L "$BP_URL" -o "$PANEL_DIR/viziontheme.blueprint" || { echo -e "${R}Download failed${N}"; exit 1; }
+  cd "$PANEL_DIR" || exit 1
+  blueprint -install viziontheme || { echo -e "${R}Blueprint install failed${N}"; exit 1; }
+  php artisan view:clear; php artisan cache:clear
+  chown -R www-data:www-data "$PANEL_DIR"/* 2>/dev/null || chown -R nginx:nginx "$PANEL_DIR"/* 2>/dev/null
+  echo -e "\n${G}✔ Vizion (Blueprint) installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
+  exit 0
+fi
+
 echo -e "\nDownloading Vizion ($TYPE $VER)..."
 TMP=$(mktemp -d)
 curl -fsSL -L "$REPO_ZIP" -o "$TMP/v.zip" || { echo -e "${R}Download failed${N}"; exit 1; }
@@ -86,7 +101,7 @@ if [ "$TYPE" = "non-blueprint" ]; then
     yarn add -D webpack-assets-manifest@5.1.0 --exact || { echo -e "${R}Could not pin webpack-assets-manifest${N}"; exit 1; }
   fi
   # Make the config tolerate either export style
-  sed -i -E "s#^(const|let|var) AssetsManifestPlugin = require\((['\"])webpack-assets-manifest\2\);#\1 AssetsManifestPlugin = (m => m.WebpackAssetsManifest || m.default || m)(require(\2webpack-assets-manifest\2));#" webpack.config.js
+  sed -i -E "s#^(const|let|var) +(\{ *)?([A-Za-z_]+)( *\})? *= *require\((['\"])webpack-assets-manifest\5\)(\.[A-Za-z]+)?;#\1 \3 = (m => m.WebpackAssetsManifest || m.default || m)(require(\5webpack-assets-manifest\5));#" webpack.config.js
   # Write the manifest as manifest.json (what the panel reads)
   sed -i "s/new AssetsManifestPlugin({ writeToDisk: true,/new AssetsManifestPlugin({ output: 'manifest.json', writeToDisk: true,/" webpack.config.js
 
