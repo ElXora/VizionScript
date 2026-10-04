@@ -3,7 +3,7 @@
 API_URL="http://78.154.103.21:10532"
 REPO_ZIP="https://github.com/ElXora/VizionScript/raw/refs/heads/main/main.zip"
 PANEL_DIR="${PANEL_DIR:-/var/www/pterodactyl}"
-BP_URL="${REPO_ZIP%main.zip}main.blueprint"   # main.blueprint sits next to main.zip in your repo
+BP_URL="${REPO_ZIP%main.zip}vizionmono.blueprint"   # vizionmono.blueprint sits next to main.zip in your repo
 
 C='\033[1;36m'; G='\033[1;32m'; R='\033[1;31m'; N='\033[0m'
 clear; echo -e "${C}
@@ -52,9 +52,9 @@ if [ "$TYPE" = "blueprint" ]; then
   command -v blueprint >/dev/null || { echo -e "${R}Blueprint is not installed on this panel. Install Blueprint first (blueprint.zip), then run this installer again.${N}"; exit 1; }
   read -rp "Install Vizion (Blueprint) into $PANEL_DIR ? [y/N]: " OK
   [[ "$OK" =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 0; }
-  curl -fsSL -L "$BP_URL" -o "$PANEL_DIR/viziontheme.blueprint" || { echo -e "${R}Download failed${N}"; exit 1; }
+  curl -fsSL -L "$BP_URL" -o "$PANEL_DIR/vizionmono.blueprint" || { echo -e "${R}Download failed${N}"; exit 1; }
   cd "$PANEL_DIR" || exit 1
-  blueprint -install viziontheme || { echo -e "${R}Blueprint install failed${N}"; exit 1; }
+  blueprint -install vizionmono || { echo -e "${R}Blueprint install failed${N}"; exit 1; }
   php artisan view:clear; php artisan cache:clear
   chown -R www-data:www-data "$PANEL_DIR"/* 2>/dev/null || chown -R nginx:nginx "$PANEL_DIR"/* 2>/dev/null
   echo -e "\n${G}✔ Vizion (Blueprint) installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
