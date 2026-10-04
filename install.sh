@@ -17,13 +17,9 @@ for c in curl unzip; do command -v $c >/dev/null || { echo -e "${R}$c is require
 read -rp "Email used for your license: " EMAIL
 read -rp "License key: " KEY
 EMAIL=$(echo "$EMAIL" | tr -d '\r' | xargs); KEY=$(echo "$KEY" | tr -d '\r' | xargs)
-echo -e "\n1) Non-Blueprint\n2) Blueprint"; read -rp "Select type: " T
-[ "$T" = "2" ] && TYPE="blueprint" || TYPE="non-blueprint"
-echo -e "\n1) 2.0.8\n2) 2.1.0"; read -rp "Select version: " V
-[ "$V" = "1" ] && VER="2.0.8" || VER="2.1.0"
 
 IP=$(curl -s --max-time 5 https://api.ipify.org)
-BODY=$(printf '{"email":"%s","key":"%s","ip":"%s","requestedType":"%s","requestedVersion":"%s"}' "$EMAIL" "$KEY" "$IP" "$TYPE" "$VER")
+BODY=$(printf '{"email":"%s","key":"%s","ip":"%s"}' "$EMAIL" "$KEY" "$IP")
 
 echo -ne "\nVerifying license..."
 RESP=$(curl -s --max-time 20 -X POST -H 'Content-Type: application/json' -d "$BODY" "$API_URL/api/verify")
@@ -34,7 +30,23 @@ if ! echo "$RESP" | grep -q '"success":true'; then
 fi
 echo -e " ${G}verified ✔${N}\n"
 
-echo "Downloading Vizion ($TYPE $VER)..."
+# Only what the license allows can be installed
+LT=$(echo "$RESP" | sed -n 's/.*"type":"\([^"]*\)".*/\1/p')
+LV=$(echo "$RESP" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+if [ "$LT" = "blueprint" ] || [ "$LT" = "non-blueprint" ]; then
+  TYPE="$LT"; echo -e "License type: ${G}$TYPE${N}"
+else
+  echo -e "1) Non-Blueprint\n2) Blueprint"; read -rp "Select type: " T
+  [ "$T" = "2" ] && TYPE="blueprint" || TYPE="non-blueprint"
+fi
+if [ "$LV" = "2.0.8" ] || [ "$LV" = "2.1.0" ]; then
+  VER="$LV"; echo -e "License version: ${G}$VER${N}"
+else
+  echo -e "\n1) 2.0.8\n2) 2.1.0"; read -rp "Select version: " V
+  [ "$V" = "1" ] && VER="2.0.8" || VER="2.1.0"
+fi
+
+echo -e "\nDownloading Vizion ($TYPE $VER)..."
 TMP=$(mktemp -d)
 curl -fsSL -L "$REPO_ZIP" -o "$TMP/v.zip" || { echo -e "${R}Download failed${N}"; exit 1; }
 unzip -q "$TMP/v.zip" -d "$TMP/src" || { echo -e "${R}Unzip failed${N}"; exit 1; }
@@ -75,6 +87,8 @@ if [ "$TYPE" = "non-blueprint" ]; then
   fi
   # Make the config tolerate either export style
   sed -i -E "s#^(const|let|var) AssetsManifestPlugin = require\((['\"])webpack-assets-manifest\2\);#\1 AssetsManifestPlugin = (m => m.WebpackAssetsManifest || m.default || m)(require(\2webpack-assets-manifest\2));#" webpack.config.js
+  # Write the manifest as manifest.json (what the panel reads)
+  sed -i "s/new AssetsManifestPlugin({ writeToDisk: true,/new AssetsManifestPlugin({ output: 'manifest.json', writeToDisk: true,/" webpack.config.js
 
   # Webpack compatibility fixes (installed webpack version decides which apply)
   WP_MAJOR=$(node -p "require('./node_modules/webpack/package.json').version.split('.')[0]" 2>/dev/null)
@@ -86,6 +100,8 @@ if [ "$TYPE" = "non-blueprint" ]; then
       yarn add -D terser-webpack-plugin@^5 || { echo -e "${R}Could not install terser-webpack-plugin${N}"; exit 1; }
     fi
     sed -i -E '/^\s*cache:\s*(true|false),?\s*$/d' webpack.config.js
+    # Remove the old `cache` option inside TerserPlugin(...)
+    sed -i -E '/TerserPlugin\(/,/\}\)/ s/\bcache:[[:space:]]*[a-zA-Z]+[[:space:]]*,?//' webpack.config.js
     # Webpack 5: no automatic Node polyfills -> "Can't resolve 'path'"
     [ -d node_modules/path-browserify ] || yarn add -D path-browserify || { echo -e "${R}Could not install path-browserify${N}"; exit 1; }
     grep -q "path-browserify" webpack.config.js || sed -i -E "0,/^(\s*)resolve:\s*\{/s//&\n\1    fallback: { path: require.resolve('path-browserify') },/" webpack.config.js
@@ -96,6 +112,8 @@ if [ "$TYPE" = "non-blueprint" ]; then
   fi
 
   yarn build:production || { echo -e "${R}Build failed - theme not active. Fix the error above and run: yarn build:production${N}"; exit 1; }
+  # Make sure the panel finds its manifest
+  [ -f public/assets/assets-manifest.json ] && cp public/assets/assets-manifest.json public/assets/manifest.json
 else
   echo -e "\n${C}Blueprint: rebuild with your Blueprint command (e.g. blueprint -rerun-install) after this.${N}"
 fi
