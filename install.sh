@@ -58,6 +58,7 @@ panel_version() { sed -n "s/.*'version' *=> *'\([^']*\)'.*/\1/p" "$PANEL_DIR/con
 is_semver() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
 latest_release() { [ -n "${PTERO_LATEST_VER:-}" ] && { echo "$PTERO_LATEST_VER"; return; }
   curl -sIL -o /dev/null -w '%{url_effective}' "$RELEASES/latest" 2>/dev/null | sed -n 's#.*/tag/v\{0,1\}\(.*\)#\1#p'; }
+vizion_full() { [ -f "$PANEL_DIR/resources/scripts/assets/css/VizionTheme.ts" ]; }
 legacy_theme() { [ -d "$PANEL_DIR/public/themes/enigma_premium" ] || [ -f "$PANEL_DIR/resources/scripts/assets/css/EnigmaBusiness.ts" ]; }
 svc_restart() { command -v systemctl >/dev/null 2>&1 || return 0
   local u; for u in $(systemctl list-units --type=service --all --no-legend 2>/dev/null | awk '{print $1}' | grep -E '^(php[0-9.]*-fpm|nginx|apache2|pteroq)\.service$'); do
@@ -111,8 +112,33 @@ do_install() {
   say "Downloading Vizion..."
   curl -fsSL -L "$REPO_ZIP" -o "$TMP/v.zip" || die "Download failed"
   unzip -q "$TMP/v.zip" -d "$TMP/src" || die "Unzip failed"
+  F=$(find "$TMP/src" -path '*/resources/scripts/assets/css/VizionTheme.ts' | head -1)
+  if [ -n "$F" ]; then
+    # ---- full theme: source files + prebuilt assets for Pterodactyl 1.12.x
+    SRC="${F%/resources/scripts/assets/css/VizionTheme.ts}"
+    PV=$(panel_version); BUILD=0
+    case "$PV" in 1.12.*) ask "Rebuild from source instead of using the prebuilt assets? (needs Node 22+, a few minutes)" && BUILD=1 ;;
+      *) warn "Panel version is ${PV:-unknown}: the prebuilt assets are made for 1.12.x, so the theme will be built from source"; BUILD=1 ;; esac
+    if [ $BUILD = 1 ]; then
+      command -v node >/dev/null || die "Node.js 22+ is required to build. Install it, or use Pterodactyl 1.12.x with the prebuilt assets."
+      [ "$(node -v | sed 's/v\([0-9]*\).*/\1/')" -ge 22 ] || die "Node 22 or newer is required (found $(node -v))."
+    fi
+    rm -f public/assets/*.js public/assets/*.map 2>/dev/null   # old hashed bundles from the previous build
+    cp -a "$SRC"/. "$PANEL_DIR"/ || die "Copy failed"
+    if [ $BUILD = 1 ]; then
+      command -v yarn >/dev/null || npm i -g yarn
+      say "Building the panel (a few minutes)..."
+      export NODE_OPTIONS=--openssl-legacy-provider
+      yarn install --frozen-lockfile && yarn build:production || die "Build failed - the theme files are copied but not active. Fix the error above and run: yarn build:production"
+    fi
+    [ -f public/assets/manifest.json ] || die "public/assets/manifest.json is missing"
+    clear_caches
+    echo -e "\n${G}✔ Vizion installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
+    echo -e "  White screen or 500 error? Run this script again and choose ${Y}Fix bugs${N}."; return
+  fi
+  # ---- Vizion Mono (CSS + JS only, no build)
   V=$(find "$TMP/src" -path '*/public/themes/vizion/vizion.css' | head -1)
-  [ -n "$V" ] || die "main.zip does not contain public/themes/vizion/vizion.css"
+  [ -n "$V" ] || die "main.zip contains neither the full theme nor public/themes/vizion/vizion.css"
   mkdir -p public/themes/vizion && cp -a "$(dirname "$V")"/. public/themes/vizion/
   [ -f "$WRAP.vizion-bak" ] || cp -p "$WRAP" "$WRAP.vizion-bak"
   REV=$(date +%s)   # new number on every install so browsers never keep an old cached theme
@@ -187,11 +213,11 @@ do_fix() {
 
   say "5/7 Panel assets (white screen)"
   if check_assets; then ok "manifest and JS bundles are complete"; else
-    if is_blueprint; then
+    if is_blueprint || vizion_full; then
       warn "the panel needs a rebuild"
       if command -v yarn >/dev/null && command -v node >/dev/null && ask "Rebuild now (yarn build:production, a few minutes)?"; then
         export NODE_OPTIONS=--openssl-legacy-provider; yarn install --frozen-lockfile && yarn build:production && ok "rebuilt" || warn "build failed - run 'blueprint -rerun-install'"
-      else warn "run: blueprint -rerun-install"; fi
+      else vizion_full && warn "run this script again and choose Install (it restores the prebuilt assets)" || warn "run: blueprint -rerun-install"; fi
     else
       VER=$(panel_version)
       if is_semver "$VER" && ask "Restore the stock compiled assets of Pterodactyl $VER?"; then
