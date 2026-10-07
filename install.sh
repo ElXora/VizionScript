@@ -117,8 +117,14 @@ do_install() {
     # ---- full theme: source files + prebuilt assets for Pterodactyl 1.12.x
     SRC="${F%/resources/scripts/assets/css/VizionTheme.ts}"
     PV=$(panel_version); BUILD=0
-    case "$PV" in 1.12.*) ask "Rebuild from source instead of using the prebuilt assets? (needs Node 22+, a few minutes)" && BUILD=1 ;;
-      *) warn "Panel version is ${PV:-unknown}: the prebuilt assets are made for 1.12.x, so the theme will be built from source"; BUILD=1 ;; esac
+    if [ -d "$PANEL_DIR/.blueprint" ]; then
+      warn "Blueprint is installed on this panel. The prebuilt assets would replace Blueprint's compiled UI, so the theme is built from source instead (Node 22+)."
+      warn "The theme replaces the sidebar, dashboard and server-list files, so extension buttons Blueprint adds to those areas will not show."
+      ask "Continue?" || { echo "Cancelled."; exit 0; }; BUILD=1
+    else
+      case "$PV" in 1.12.*) ask "Rebuild from source instead of using the prebuilt assets? (needs Node 22+, a few minutes)" && BUILD=1 ;;
+        *) warn "Panel version is ${PV:-unknown}: the prebuilt assets are made for 1.12.x, so the theme will be built from source"; BUILD=1 ;; esac
+    fi
     if [ $BUILD = 1 ]; then
       command -v node >/dev/null || die "Node.js 22+ is required to build. Install it, or use Pterodactyl 1.12.x with the prebuilt assets."
       [ "$(node -v | sed 's/v\([0-9]*\).*/\1/')" -ge 22 ] || die "Node 22 or newer is required (found $(node -v))."
