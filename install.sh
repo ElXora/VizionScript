@@ -66,7 +66,7 @@ patch_vizion_backend() {
     grep -q "vizion-admin.php" routes/admin.php || printf "\nrequire __DIR__ . '/vizion-admin.php';\n" >> routes/admin.php
     local L=resources/views/layouts/admin.blade.php
     [ -f "$L" ] || return 0
-    grep -q "admin.vizion.head" "$L" || sed -i "s#</head>#    @include('admin.vizion.head')\n</head>#" "$L"
+    grep -q "admin.vizion.head" "$L" || sed -i "s#</head>#@include('admin.vizion.head')\n    </head>#" "$L"
     grep -q "route('admin.vizion')" "$L" || sed -i "0,/<li class=\"header\">MANAGEMENT<\/li>/s##<li class=\"{{ request()->routeIs('admin.vizion') ? 'active' : '' }}\">\n                            <a href=\"{{ route('admin.vizion') }}\"><i class=\"fa fa-paint-brush\"><\/i> <span>Appearance<\/span><\/a>\n                        <\/li>\n                        <li class=\"header\">MANAGEMENT<\/li>#" "$L"
   fi
 }
@@ -151,6 +151,9 @@ do_install() {
     fi
     [ -f public/assets/manifest.json ] || die "public/assets/manifest.json is missing"
     patch_vizion_backend
+    if [ -n "${VIZION_CARD_IMAGE:-}" ] && [ -f "$VIZION_CARD_IMAGE" ]; then
+      cp -f "$VIZION_CARD_IMAGE" "public/vizion/card-default.${VIZION_CARD_IMAGE##*.}" && ok "default server-card picture installed"
+    fi
     clear_caches
     echo -e "\n${G}✔ Vizion installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
     echo -e "  Admins: open ${Y}Admin → Appearance${N} to change the look, banner and links for everyone."
