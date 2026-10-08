@@ -58,6 +58,18 @@ panel_version() { sed -n "s/.*'version' *=> *'\([^']*\)'.*/\1/p" "$PANEL_DIR/con
 is_semver() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
 latest_release() { [ -n "${PTERO_LATEST_VER:-}" ] && { echo "$PTERO_LATEST_VER"; return; }
   curl -sIL -o /dev/null -w '%{url_effective}' "$RELEASES/latest" 2>/dev/null | sed -n 's#.*/tag/v\{0,1\}\(.*\)#\1#p'; }
+# Hooks the theme into the panel's own files without replacing them (keeps Blueprint's changes intact). Safe to repeat.
+patch_vizion_backend() {
+  mkdir -p public/vizion storage/app/vizion
+  [ -f routes/vizion.php ] && ! grep -q "vizion.php" routes/api-client.php && printf "\nrequire __DIR__ . '/vizion.php';\n" >> routes/api-client.php
+  if [ -f routes/vizion-admin.php ]; then
+    grep -q "vizion-admin.php" routes/admin.php || printf "\nrequire __DIR__ . '/vizion-admin.php';\n" >> routes/admin.php
+    local L=resources/views/layouts/admin.blade.php
+    [ -f "$L" ] || return 0
+    grep -q "admin.vizion.head" "$L" || sed -i "s#</head>#    @include('admin.vizion.head')\n</head>#" "$L"
+    grep -q "route('admin.vizion')" "$L" || sed -i "0,/<li class=\"header\">MANAGEMENT<\/li>/s##<li class=\"{{ request()->routeIs('admin.vizion') ? 'active' : '' }}\">\n                            <a href=\"{{ route('admin.vizion') }}\"><i class=\"fa fa-paint-brush\"><\/i> <span>Appearance<\/span><\/a>\n                        <\/li>\n                        <li class=\"header\">MANAGEMENT<\/li>#" "$L"
+  fi
+}
 vizion_full() { [ -f "$PANEL_DIR/resources/scripts/assets/css/VizionTheme.ts" ]; }
 legacy_theme() { [ -d "$PANEL_DIR/public/themes/enigma_premium" ] || [ -f "$PANEL_DIR/resources/scripts/assets/css/EnigmaBusiness.ts" ]; }
 svc_restart() { command -v systemctl >/dev/null 2>&1 || return 0
@@ -138,8 +150,10 @@ do_install() {
       yarn install --frozen-lockfile && yarn build:production || die "Build failed - the theme files are copied but not active. Fix the error above and run: yarn build:production"
     fi
     [ -f public/assets/manifest.json ] || die "public/assets/manifest.json is missing"
+    patch_vizion_backend
     clear_caches
     echo -e "\n${G}✔ Vizion installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
+    echo -e "  Admins: open ${Y}Admin → Appearance${N} to change the look, banner and links for everyone."
     echo -e "  White screen or 500 error? Run this script again and choose ${Y}Fix bugs${N}."; return
   fi
   # ---- Vizion Mono (CSS + JS only, no build)
@@ -212,6 +226,7 @@ do_fix() {
   say "3/7 Caches"; clear_caches; ok "views, config, routes and cache cleared"
 
   say "4/7 Theme wiring"
+  if [ -f routes/vizion-admin.php ]; then patch_vizion_backend && ok "routes, admin menu and admin theme are hooked in"; fi
   if grep -q "themes/vizion/" "$WRAP" 2>/dev/null && [ ! -f public/themes/vizion/vizion.css ]; then
     sed -i '/themes\/vizion\//d' "$WRAP"; warn "theme files were missing - removed the broken theme links (re-run Install to add them back)"
   else ok "ok"; fi
@@ -271,6 +286,7 @@ do_uninstall() {
   say "Removing the theme"
   sed -i '/themes\/vizion\//d' "$WRAP" 2>/dev/null
   rm -rf public/themes/vizion public/themes/enigma_premium public/assets resources/scripts resources/views public/themes
+  rm -rf public/vizion storage/app/vizion routes/vizion.php routes/vizion-admin.php app/Http/Controllers/Admin/VizionController.php
   ok "theme files removed"
 
   say "Restoring stock Pterodactyl $WANTV"
