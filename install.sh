@@ -51,6 +51,22 @@ clear_caches() {
   art queue:restart >/dev/null 2>&1
   fix_perms
 }
+# Post-install repair: permissions, Laravel caches, PHP-FPM + nginx restart. Never touches data or APP_KEY.
+repair_panel() {
+  say "Repairing permissions, caches and services"
+  cd "$PANEL_DIR" || return 0
+  chown -R "$WEBUSER:$WEBGROUP" storage bootstrap/cache 2>/dev/null
+  chmod -R u+rwX,g+rwX storage bootstrap/cache 2>/dev/null
+  art config:clear >/dev/null 2>&1; art cache:clear >/dev/null 2>&1; art view:clear >/dev/null 2>&1
+  ok "permissions fixed, config / cache / view caches cleared"
+  if [ -d /etc/php ]; then
+    PHP_VERSION=$(ls /etc/php | sort -V | tail -n 1)
+    systemctl restart "php${PHP_VERSION}-fpm" >/dev/null 2>&1 && ok "restarted php${PHP_VERSION}-fpm" || warn "could not restart php${PHP_VERSION}-fpm (check the service name)"
+  fi
+  systemctl restart nginx >/dev/null 2>&1 && ok "restarted nginx" || warn "could not restart nginx (ignore if you use another web server)"
+  grep -qE '^APP_KEY=.+' .env 2>/dev/null || warn "APP_KEY is empty in .env - restore it from a secure backup. This installer never generates or replaces it."
+  warn "Now open the panel and test it. Still a 500/502? See TROUBLESHOOTING.md (logs: storage/logs/laravel-*.log)"
+}
 is_blueprint() { [ -d "$PANEL_DIR/.blueprint" ] && command -v blueprint >/dev/null 2>&1; }
 bp_has() { [ -d "$PANEL_DIR/.blueprint/extensions/$1" ]; }
 WRAP="resources/views/templates/wrapper.blade.php"
@@ -117,7 +133,7 @@ do_install() {
     blueprint -install "$BP_ID"; RC=$?
     rm -f "$PANEL_DIR/$BP_ID.blueprint"
     [ $RC -eq 0 ] || die "Blueprint install failed - see the output above."
-    clear_caches
+    clear_caches; repair_panel
     echo -e "\n${G}✔ Vizion (Blueprint) installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"; return
   fi
 
@@ -156,7 +172,7 @@ do_install() {
     if [ -n "${VIZION_CARD_IMAGE:-}" ] && [ -f "$VIZION_CARD_IMAGE" ]; then
       cp -f "$VIZION_CARD_IMAGE" "public/vizion/card-default.${VIZION_CARD_IMAGE##*.}" && ok "default server-card picture installed"
     fi
-    clear_caches
+    clear_caches; repair_panel
     echo -e "\n${G}✔ Vizion installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
     echo -e "  Admins: open ${Y}Admin → Appearance${N} to change the look, banner and links for everyone."
     echo -e "  White screen or 500 error? Run this script again and choose ${Y}Fix bugs${N}."; return
@@ -173,7 +189,7 @@ do_install() {
     sed -i "s#</head>#    <link rel=\"stylesheet\" href=\"/themes/vizion/vizion.css?v=$REV\">\n    <script defer src=\"/themes/vizion/vizion.js?v=$REV\"></script>\n</head>#" "$WRAP"
   fi
   grep -q "themes/vizion/vizion.css" "$WRAP" || die "Could not patch $WRAP"
-  clear_caches
+  clear_caches; repair_panel
   echo -e "\n${G}✔ Vizion Mono installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
   echo -e "  If you ever get a white screen or 500 error, run this script again and choose ${Y}Fix bugs${N}."
 }
