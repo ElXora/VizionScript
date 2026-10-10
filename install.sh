@@ -67,6 +67,34 @@ repair_panel() {
   grep -qE '^APP_KEY=.+' .env 2>/dev/null || warn "APP_KEY is empty in .env - restore it from a secure backup. This installer never generates or replaces it."
   warn "Now open the panel and test it. Still a 500/502? See TROUBLESHOOTING.md (logs: storage/logs/laravel-*.log)"
 }
+# Checks that the big server cards really made it: image files, compiled build, web access.
+verify_cards() {
+  say "Checking the server card banners"
+  cd "$PANEL_DIR" || return 0
+  chown -R "$WEBUSER:$WEBGROUP" public/vizion 2>/dev/null; chmod 755 public/vizion 2>/dev/null; chmod 644 public/vizion/*.jpg 2>/dev/null
+  local img miss=0 url code
+  for img in card-minecraft.jpg card-nodejs.jpg; do
+    [ -f "public/vizion/$img" ] && ok "found public/vizion/$img" || { warn "missing public/vizion/$img (is the new main.zip / blueprint uploaded to your repo?)"; miss=1; }
+  done
+  if grep -l "vz-bigcard" public/assets/*.js >/dev/null 2>&1; then ok "compiled build contains the new server cards"
+  else
+    warn "compiled build is OLD - the cards cannot change until the panel is rebuilt"
+    if is_blueprint && bp_has "$BP_ID"; then
+      ask "Run 'blueprint -rerun-install' now?" && { blueprint -rerun-install; clear_caches; repair_panel; }
+    elif command -v node >/dev/null && command -v yarn >/dev/null; then
+      ask "Run yarn build:production now (a few minutes)?" && { export NODE_OPTIONS=--openssl-legacy-provider; yarn install --frozen-lockfile && yarn build:production && { fix_perms; clear_caches; ok "rebuilt"; }; }
+    else warn "run: yarn build:production   (or: blueprint -rerun-install)"; fi
+    grep -l "vz-bigcard" public/assets/*.js >/dev/null 2>&1 && ok "build now contains the new server cards"
+  fi
+  url=$(grep -E '^APP_URL=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"' \r")
+  if [ -n "$url" ] && [ $miss = 0 ]; then
+    for img in card-minecraft.jpg card-nodejs.jpg; do
+      code=$(curl -sk --max-time 15 -o /dev/null -w '%{http_code}' "$url/vizion/$img" 2>/dev/null)
+      [ "$code" = 200 ] && ok "web server serves /vizion/$img" || warn "/vizion/$img answers $code - check nginx / permissions"
+    done
+  fi
+  warn "Hard-refresh (Ctrl+Shift+R) and test the dashboard. If the banners are still missing, open F12 > Network and check card-*.jpg."
+}
 is_blueprint() { [ -d "$PANEL_DIR/.blueprint" ] && command -v blueprint >/dev/null 2>&1; }
 bp_has() { [ -d "$PANEL_DIR/.blueprint/extensions/$1" ]; }
 WRAP="resources/views/templates/wrapper.blade.php"
@@ -133,7 +161,7 @@ do_install() {
     blueprint -install "$BP_ID"; RC=$?
     rm -f "$PANEL_DIR/$BP_ID.blueprint"
     [ $RC -eq 0 ] || die "Blueprint install failed - see the output above."
-    clear_caches; repair_panel
+    clear_caches; repair_panel; verify_cards
     echo -e "\n${G}✔ Vizion (Blueprint) installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"; return
   fi
 
@@ -172,7 +200,7 @@ do_install() {
     if [ -n "${VIZION_CARD_IMAGE:-}" ] && [ -f "$VIZION_CARD_IMAGE" ]; then
       cp -f "$VIZION_CARD_IMAGE" "public/vizion/card-default.${VIZION_CARD_IMAGE##*.}" && ok "default server-card picture installed"
     fi
-    clear_caches; repair_panel
+    clear_caches; repair_panel; verify_cards
     echo -e "\n${G}✔ Vizion installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"
     echo -e "  Admins: open ${Y}Admin → Appearance${N} to change the look, banner and links for everyone."
     echo -e "  White screen or 500 error? Run this script again and choose ${Y}Fix bugs${N}."; return
