@@ -126,26 +126,28 @@ do_install() {
   unzip -q "$TMP/v.zip" -d "$TMP/src" || die "Unzip failed"
   F=$(find "$TMP/src" -path '*/resources/scripts/assets/css/VizionTheme.ts' | head -1)
   if [ -n "$F" ]; then
-    # ---- full theme: source files + prebuilt assets for Pterodactyl 1.12.x
+    # ---- full theme: copy the source files, then compile them (the big server cards live in the source,
+    #      so the old prebuilt assets in main.zip must NOT be used). Set VIZION_PREBUILT=1 only if main.zip
+    #      ships freshly built assets.
     SRC="${F%/resources/scripts/assets/css/VizionTheme.ts}"
-    PV=$(panel_version); BUILD=0
+    PV=$(panel_version)
+    BUILD=1; [ -n "${VIZION_PREBUILT:-}" ] && BUILD=0
     if [ -d "$PANEL_DIR/.blueprint" ]; then
       warn "Blueprint is installed on this panel. The prebuilt assets would replace Blueprint's compiled UI, so the theme is built from source instead (Node 22+)."
       warn "The theme replaces the sidebar, dashboard and server-list files, so extension buttons Blueprint adds to those areas will not show."
-      ask "Continue?" || { echo "Cancelled."; exit 0; }; BUILD=1
-    else
-      case "$PV" in 1.12.*) ask "Rebuild from source instead of using the prebuilt assets? (needs Node 22+, a few minutes)" && BUILD=1 ;;
-        *) warn "Panel version is ${PV:-unknown}: the prebuilt assets are made for 1.12.x, so the theme will be built from source"; BUILD=1 ;; esac
+      ask "Continue?" || { echo "Cancelled."; exit 0; }
     fi
+    [ -n "$PV" ] && ! [[ "$PV" == 1.12.* ]] && warn "Panel version is $PV: the theme is made for 1.12.x"
     if [ $BUILD = 1 ]; then
-      command -v node >/dev/null || die "Node.js 22+ is required to build. Install it, or use Pterodactyl 1.12.x with the prebuilt assets."
+      command -v node >/dev/null || die "Node.js 22+ is required to build. Install it first (https://nodejs.org)."
       [ "$(node -v | sed 's/v\([0-9]*\).*/\1/')" -ge 22 ] || die "Node 22 or newer is required (found $(node -v))."
     fi
     rm -f public/assets/*.js public/assets/*.map 2>/dev/null   # old hashed bundles from the previous build
     cp -a "$SRC"/. "$PANEL_DIR"/ || die "Copy failed"
     if [ $BUILD = 1 ]; then
+      rm -f public/assets/*.js public/assets/*.map public/assets/manifest.json 2>/dev/null   # drop the stale bundles copied from main.zip
       command -v yarn >/dev/null || npm i -g yarn
-      say "Building the panel (a few minutes)..."
+      say "Building the panel with the new server cards (a few minutes, needs ~2 GB RAM)..."
       export NODE_OPTIONS=--openssl-legacy-provider
       yarn install --frozen-lockfile && yarn build:production || die "Build failed - the theme files are copied but not active. Fix the error above and run: yarn build:production"
     fi
@@ -241,7 +243,7 @@ do_fix() {
       warn "the panel needs a rebuild"
       if command -v yarn >/dev/null && command -v node >/dev/null && ask "Rebuild now (yarn build:production, a few minutes)?"; then
         export NODE_OPTIONS=--openssl-legacy-provider; yarn install --frozen-lockfile && yarn build:production && ok "rebuilt" || warn "build failed - run 'blueprint -rerun-install'"
-      else vizion_full && warn "run this script again and choose Install (it restores the prebuilt assets)" || warn "run: blueprint -rerun-install"; fi
+      else vizion_full && warn "run: yarn build:production (or run this script again and choose Install)" || warn "run: blueprint -rerun-install"; fi
     else
       VER=$(panel_version)
       if is_semver "$VER" && ask "Restore the stock compiled assets of Pterodactyl $VER?"; then
