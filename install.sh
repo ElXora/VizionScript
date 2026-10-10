@@ -3,6 +3,7 @@
 API_URL="http://78.154.103.21:10532"
 REPO_ZIP="https://github.com/ElXora/VizionScript/raw/refs/heads/main/main.zip"
 BP_URL="${REPO_ZIP%main.zip}vizionmono.blueprint"   # vizionmono.blueprint sits next to main.zip in your repo
+FULL_URL="${REPO_ZIP%main.zip}pterodactyl-1.15.1-vizion.zip"   # full Pterodactyl 1.15.1 + Vizion with prebuilt assets (sits next to main.zip)
 BP_ID="vizionmono"; BP_OLD_ID="viziontheme"
 PANEL_DIR="${PANEL_DIR:-/var/www/pterodactyl}"
 RELEASES="${PTERO_RELEASE_BASE:-https://github.com/pterodactyl/panel/releases}"
@@ -129,6 +130,40 @@ fetch_stock() { # $1 = version (x.y.z) or "latest"
   [ -f "$TMP/stock/artisan" ] && [ -f "$TMP/stock/public/assets/manifest.json" ]
 }
 
+# Full package: stock Pterodactyl 1.15.1 + Vizion, prebuilt assets (no Node needed). Keeps .env and storage/.
+try_full_install() {
+  say "Downloading the full Vizion package (Pterodactyl 1.15.1 + theme)..."
+  curl -fsSL -L --max-time 300 "$FULL_URL" -o "$TMP/full.zip" 2>/dev/null && unzip -tq "$TMP/full.zip" >/dev/null 2>&1 \
+    || { warn "full package not found at $FULL_URL - using the source install instead"; return 1; }
+  unzip -l "$TMP/full.zip" | grep -q "public/assets/manifest.json" || { warn "package has no built assets - using the source install instead"; return 1; }
+  PV=$(panel_version)
+  echo -e "Installed panel: ${G}${PV:-unknown}${N}   Package: ${G}1.15.1${N}"
+  warn "This upgrades your panel files to Pterodactyl 1.15.1 with Vizion. Your .env, storage/ and database are kept."
+  warn "Take a database backup first:  mysqldump -u root -p panel > /root/panel-db-backup.sql"
+  [ -d .blueprint ] && warn "Blueprint is installed here: this package replaces its compiled UI. Use the Blueprint license option instead if you use extensions."
+  command -v php >/dev/null || die "php was not found"
+  command -v composer >/dev/null || die "composer is required (apt install -y composer, or https://getcomposer.org)"
+  ask "Continue?" || { echo "Cancelled."; exit 0; }
+  BK="/root/vizion-prebackup-$(date +%Y%m%d-%H%M%S).tar.gz"; [ -w /root ] || BK="$PWD/vizion-prebackup-$(date +%Y%m%d-%H%M%S).tar.gz"
+  tar czf "$BK" app routes resources public config database bootstrap composer.json composer.lock .env 2>/dev/null && ok "file backup saved: $BK"
+  art down >/dev/null 2>&1
+  rm -f public/assets/*.js public/assets/*.map 2>/dev/null     # old hashed bundles
+  unzip -qo "$TMP/full.zip" -x ".env" "storage/*" -d "$PANEL_DIR" || { art up >/dev/null 2>&1; die "Unzip failed - nothing was deleted. Backup: $BK"; }
+  ok "panel files + theme copied"
+  patch_vizion_backend
+  mkdir -p storage/app/vizion public/vizion
+  say "Updating PHP dependencies"
+  composer install --no-dev --optimize-autoloader --no-interaction || { art up >/dev/null 2>&1; die "composer install failed - see the output above. Backup: $BK"; }
+  say "Updating the database schema (keeps your data)"
+  art migrate --seed --force || warn "migrate reported a problem - check the output above"
+  fix_perms; clear_caches; repair_panel; verify_cards
+  art up >/dev/null 2>&1; ok "panel is back online"
+  echo -e "\n${G}✔ Vizion installed (Pterodactyl 1.15.1).${N} Hard-refresh your browser (Ctrl+Shift+R)."
+  echo -e "  Admins: open ${Y}Admin → Appearance${N} to change the look. File backup: $BK"
+  echo -e "  500/502? Run this script again and choose ${Y}Fix bugs${N}, or see TROUBLESHOOTING.md."
+  return 0
+}
+
 # ================================================================= INSTALL
 do_install() {
   for c in curl unzip; do command -v $c >/dev/null || die "$c is required (apt install -y $c)"; done
@@ -165,6 +200,7 @@ do_install() {
     echo -e "\n${G}✔ Vizion (Blueprint) installed. Hard-refresh your browser (Ctrl+Shift+R).${N}"; return
   fi
 
+  if [ -z "${VIZION_SOURCE:-}" ] && try_full_install; then return; fi
   say "Downloading Vizion..."
   curl -fsSL -L "$REPO_ZIP" -o "$TMP/v.zip" || die "Download failed"
   unzip -q "$TMP/v.zip" -d "$TMP/src" || die "Unzip failed"
